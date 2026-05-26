@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   motion, 
   AnimatePresence 
@@ -8,700 +8,1582 @@ import {
   Check, 
   Layers, 
   Lock, 
+  Unlock,
   Sparkles, 
-  TrendingUp, 
   User, 
   Calendar, 
   Mail, 
-  MessageSquare, 
-  FileSpreadsheet, 
   CheckCircle2, 
-  FileText,
-  BadgeAlert, 
   Menu, 
   X,
-  Clock,
-  Briefcase
+  ShoppingBag,
+  Plus,
+  Minus,
+  Trash2,
+  ShieldCheck,
+  Tag,
+  Heart,
+  Search,
+  Sliders,
+  Info,
+  ChevronRight,
+  HelpCircle,
+  Armchair,
+  LogOut,
+  ChevronDown,
+  History,
+  AlertTriangle
 } from "lucide-react";
 
 import InteractiveModel from "./components/InteractiveModel";
 import Pricing from "./components/Pricing";
 import FAQ from "./components/FAQ";
-import LeadForm from "./components/LeadForm";
+import AdminPortal from "./components/AdminPortal";
+import ReviewsCarousel from "./components/ReviewsCarousel";
+import { INITIAL_PRODUCTS } from "./data";
+import { Product, CartItem } from "./types";
+import { db, auth, googleProvider, signInWithPopup, signOut, handleFirestoreError } from "./firebase";
+import { collection, query, getDocs, doc, setDoc, deleteDoc, serverTimestamp, where } from "firebase/firestore";
+import { TRANSLATIONS, Language, Theme, Currency, formatPrice } from "./translations";
+
 
 export default function App() {
-  const [activeStep, setActiveStep] = useState<1 | 2 | 3>(2);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"store" | "admin" | "collection">("store");
+  
+  const [siteConfig, setSiteConfig] = useState<{
+    id: string;
+    footerAbout?: string;
+    footerContact?: string;
+    footerWarranty?: string;
+    heroTitle?: string;
+    heroSub?: string;
+    heroDesc?: string;
+    faq?: { question: string; answer: string }[];
+  } | null>(null);
+  
+  // Auth & UI States
+  const [user, setUser] = useState<any>(null);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+  const [myOrders, setMyOrders] = useState<any[]>([]);
+  const [isDbLoading, setIsDbLoading] = useState(false);
 
-  // Smooth scroll handler
-  const handleScroll = (id: string) => {
-    setMobileMenuOpen(false);
-    const element = document.getElementById(id);
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth", block: "start" });
+  // Settings & Localization parameters (persisted locally)
+  const [lang, setLang] = useState<Language>(() => {
+    return (localStorage.getItem("nexus_lang") as Language) || "fr";
+  });
+  const [theme, setTheme] = useState<Theme>(() => {
+    return (localStorage.getItem("nexus_theme") as Theme) || "white";
+  });
+  const [currency, setCurrency] = useState<Currency>(() => {
+    return (localStorage.getItem("nexus_currency") as Currency) || "EUR";
+  });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Active translation dictionary
+  const t = TRANSLATIONS[lang] || TRANSLATIONS.fr;
+
+  // Products state - initialized with INITIAL_PRODUCTS, updated from Firestore
+  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
+
+  // Cart State - Persisted locally
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    const saved = localStorage.getItem("nexus_cart_list");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Error loading cart", e);
+      }
+    }
+    return [];
+  });
+
+  // Drawer states
+  const [cartOpen, setCartOpen] = useState(false);
+  const [selectedProductForDetails, setSelectedProductForDetails] = useState<Product | null>(null);
+
+  // Promo code states
+  const [promoCodeInput, setPromoCodeInput] = useState("");
+  const [activeDiscount, setActiveDiscount] = useState(0); // overall percentage discount
+  const [appliedCodeName, setAppliedCodeName] = useState("");
+  const [promoError, setPromoError] = useState("");
+
+  // Checkout states
+  const [checkoutStep, setCheckoutStep] = useState<"idle" | "form" | "confirm">("idle");
+  const [shippingAddress, setShippingAddress] = useState({
+    fullName: "",
+    address: "",
+    city: "",
+    zip: "",
+    cardNumber: "4970 •••• •••• 9012",
+    cvv: "325"
+  });
+  const [orderTracking, setOrderTracking] = useState("");
+
+  // Favorites spotlight demo item state
+  const [spotlightQty, setSpotlightQty] = useState(1);
+  const [spotlightColorIdx, setSpotlightColorIdx] = useState(0);
+  const [spotlightAdded, setSpotlightAdded] = useState(false);
+
+  // Subscribe to Auth State Changes
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged((u) => {
+      setUser(u);
+      setAuthChecking(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Protect Admin Route dynamically if user changes/logs out
+  useEffect(() => {
+    if (activeTab === "admin" && (!user || user.email !== "grasdvirus@gmail.com")) {
+      setActiveTab("store");
+    }
+  }, [user, activeTab]);
+
+  // Sync products dynamically from Firestore products collection (Client side query)
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        setIsDbLoading(true);
+        const q = query(collection(db, "products"));
+        const querySnapshot = await getDocs(q);
+        
+        if (querySnapshot.empty) {
+          // If Firestore contains zero products, we fall back to displaying INITIAL_PRODUCTS in UI
+          setProducts(INITIAL_PRODUCTS);
+        } else {
+          const loadedProducts: Product[] = [];
+          querySnapshot.forEach((docSnapshot) => {
+            loadedProducts.push(docSnapshot.data() as Product);
+          });
+          setProducts(loadedProducts);
+        }
+      } catch (err) {
+        console.error("Failed to load products from Firestore, using fallback local values:", err);
+        setProducts(INITIAL_PRODUCTS);
+      } finally {
+        setIsDbLoading(false);
+      }
+    };
+    fetchProducts();
+  }, [user]);
+
+  // Sync site dynamic configuration from Firestore main_config document
+  useEffect(() => {
+    const fetchSiteConfig = async () => {
+      try {
+        const q = query(collection(db, "site_config"));
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+          const matched = snapshot.docs.find(d => d.id === "main_config") || snapshot.docs[0];
+          setSiteConfig(matched.data() as any);
+        }
+      } catch (err) {
+        console.error("Failed to load global site configuration values from Firestore:", err);
+      }
+    };
+    fetchSiteConfig();
+  }, [activeTab]);
+
+  // Sync user orders tracking history from Firestore
+  useEffect(() => {
+    if (!user) {
+      setMyOrders([]);
+      return;
+    }
+    const fetchMyOrders = async () => {
+      try {
+        const q = query(collection(db, "orders"), where("userId", "==", user.uid));
+        const querySnapshot = await getDocs(q);
+        const fetched: any[] = [];
+        querySnapshot.forEach((docSnap) => {
+          fetched.push(docSnap.data());
+        });
+        setMyOrders(fetched);
+      } catch (err) {
+        console.error("Error reading past purchases:", err);
+      }
+    };
+    fetchMyOrders();
+  }, [user, checkoutStep]);
+
+  // Sync Settings to LocalStorage
+  useEffect(() => {
+    localStorage.setItem("nexus_lang", lang);
+  }, [lang]);
+
+  useEffect(() => {
+    localStorage.setItem("nexus_theme", theme);
+    if (theme === "black") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem("nexus_currency", currency);
+  }, [currency]);
+
+  // Sync Cart to local storage
+  useEffect(() => {
+    localStorage.setItem("nexus_cart_list", JSON.stringify(cart));
+  }, [cart]);
+
+  // Google Sign-In helper triggers Google Auth Provider
+  const handleGoogleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (e) {
+      console.error("Google authentication failed:", e);
     }
   };
 
+  // Logout helper triggers firebase sign out
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setUserDropdownOpen(false);
+    } catch (e) {
+      console.error("Sign-out failed:", e);
+    }
+  };
+
+  // Admin seed database helper
+  const handleSeedDatabase = async () => {
+    if (!user || user.email !== "grasdvirus@gmail.com") {
+      alert("Seul l'administrateur (grasdvirus@gmail.com) peut restaurer le catalogue initial dans Firestore.");
+      return;
+    }
+    try {
+      if (window.confirm("Voulez-vous peupler Firestore avec les produits de démonstration initiaux ?")) {
+        for (const prod of INITIAL_PRODUCTS) {
+          await setDoc(doc(db, "products", prod.id), prod);
+        }
+        alert("Catalogue démo synchronisé avec succès dans Firestore !");
+        // Re-read products trigger
+        const q = query(collection(db, "products"));
+        const querySnapshot = await getDocs(q);
+        const loaded: Product[] = [];
+        querySnapshot.forEach((d) => loaded.push(d.data() as Product));
+        setProducts(loaded);
+      }
+    } catch (err: any) {
+      console.error("Failed to seed items database:", err);
+      try {
+        handleFirestoreError(err);
+      } catch (fmtDocErr: any) {
+        const detObj = JSON.parse(fmtDocErr.message);
+        alert(`Échec de la ré-initialisation : ${detObj.message}`);
+      }
+    }
+  };
+
+  // Admin add and remove connected to firestore
+  const handleAddNewProduct = async (newProduct: Product) => {
+    try {
+      await setDoc(doc(db, "products", newProduct.id), newProduct);
+      setProducts([newProduct, ...products]);
+    } catch (e: any) {
+      console.error("Product publishing failed:", e);
+      try {
+        handleFirestoreError(e);
+      } catch (fmtDocErr: any) {
+        const schemaErr = JSON.parse(fmtDocErr.message);
+        alert(`Erreur de publication Firestore : ${schemaErr.message}\nDetail : ${schemaErr.details || ""}`);
+      }
+    }
+  };
+
+  const handleDeleteProduct = async (productId: string) => {
+    try {
+      await deleteDoc(doc(db, "products", productId));
+      setProducts(products.filter(p => p.id !== productId));
+      setCart(cart.filter(item => item.product.id !== productId));
+    } catch (e: any) {
+      console.error("Product deletion failed:", e);
+      try {
+        handleFirestoreError(e);
+      } catch (fmtDocErr: any) {
+        const schemaErr = JSON.parse(fmtDocErr.message);
+        alert(`Erreur de suppression Firestore : ${schemaErr.message}`);
+      }
+    }
+  };
+
+  // Add to Cart helper
+  const handleAddToCart = (product: Product, color: { name: string; hex: string }, variant?: string, customPrice?: number) => {
+    const cartEntryId = `${product.id}-${color.name}-${variant || "none"}`;
+    
+    const existingIndex = cart.findIndex(item => {
+      const itemKey = `${item.product.id}-${item.selectedColor.name}-${item.selectedVariant || "none"}`;
+      return itemKey === cartEntryId;
+    });
+
+    const finalProduct = customPrice ? { ...product, price: customPrice } : product;
+
+    if (existingIndex > -1) {
+      const newCart = [...cart];
+      newCart[existingIndex].quantity += 1;
+      setCart(newCart);
+    } else {
+      setCart([...cart, {
+        product: finalProduct,
+        selectedColor: color,
+        selectedVariant: variant,
+        quantity: 1
+      }]);
+    }
+
+    // Auto-open side drawer to verify the action
+    setCartOpen(true);
+  };
+
+  const handleSpotlightAddToCart = () => {
+    const spotlightItem = products.find(p => p.id === "sienna-lounge") || products[0];
+    if (!spotlightItem) return;
+
+    const selectedColor = spotlightItem.colors[spotlightColorIdx] || spotlightItem.colors[0];
+    const defaultVariant = spotlightItem.variants ? spotlightItem.variants[0] : undefined;
+
+    // Insert purchase with exact quantity
+    const cartEntryId = `${spotlightItem.id}-${selectedColor.name}-${defaultVariant || "none"}`;
+    const existingIndex = cart.findIndex(item => {
+      const itemKey = `${item.product.id}-${item.selectedColor.name}-${item.selectedVariant || "none"}`;
+      return itemKey === cartEntryId;
+    });
+
+    if (existingIndex > -1) {
+      const newCart = [...cart];
+      newCart[existingIndex].quantity += spotlightQty;
+      setCart(newCart);
+    } else {
+      setCart([...cart, {
+        product: spotlightItem,
+        selectedColor: selectedColor,
+        selectedVariant: defaultVariant,
+        quantity: spotlightQty
+      }]);
+    }
+
+    setSpotlightAdded(true);
+    setCartOpen(true);
+    setTimeout(() => setSpotlightAdded(false), 2000);
+  };
+
+  // Cart quantities update and item removal
+  const updateCartQuantity = (index: number, delta: number) => {
+    const newCart = [...cart];
+    const newQty = newCart[index].quantity + delta;
+    if (newQty <= 0) {
+      newCart.splice(index, 1);
+    } else {
+      newCart[index].quantity = newQty;
+    }
+    setCart(newCart);
+  };
+
+  const removeCartItem = (index: number) => {
+    const newCart = [...cart];
+    newCart.splice(index, 1);
+    setCart(newCart);
+  };
+
+  // Promo operations
+  const handleApplyPromo = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (promoCodeInput.trim().toUpperCase() === "WELCOME10") {
+      setActiveDiscount(10);
+      setAppliedCodeName("WELCOME10 (-10%)");
+      setPromoError("");
+      setPromoCodeInput("");
+    } else {
+      setPromoError(lang === "en" ? "Invalid code. Use WELCOME10" : lang === "es" ? "Código no válido." : lang === "ar" ? "رمز ترويجي غير صحيح. استخدم WELCOME10" : "Code invalide. Utilisez WELCOME10");
+    }
+  };
+
+  // Checkout values calculations
+  const subtotal = cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
+  const discountAmount = Math.round((subtotal * activeDiscount) / 100);
+  const shippingCharge = subtotal >= 250 || subtotal === 0 ? 0 : 25;
+  const grandTotal = Math.max(0, subtotal - discountAmount + shippingCharge);
+
+  const handleLaunchCheckout = () => {
+    setCheckoutStep("form");
+  };
+
+  const handleSubmitCheckout = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!shippingAddress.fullName || !shippingAddress.address || !shippingAddress.city) {
+      alert(lang === "en" ? "Please fill required fields" : "Veuillez renseigner les champs requis.");
+      return;
+    }
+
+    if (!user) {
+      alert(lang === "en" ? "Kindly authenticate before checkout." : "Veuillez vous connecter pour valider votre commande.");
+      return;
+    }
+
+    const orderId = `NX-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    try {
+      const orderDoc = {
+        id: orderId,
+        userId: user.uid,
+        fullName: shippingAddress.fullName,
+        address: shippingAddress.address,
+        city: shippingAddress.city,
+        zip: shippingAddress.zip || "",
+        items: cart.map(item => ({
+          productId: item.product.id,
+          name: item.product.name,
+          price: item.product.price,
+          quantity: item.quantity,
+          selectedColor: item.selectedColor,
+          selectedVariant: item.selectedVariant || ""
+        })),
+        subtotal: subtotal,
+        discount: activeDiscount,
+        shipping: shippingCharge,
+        total: grandTotal,
+        createdAt: serverTimestamp() // Set dynamically on server to preserve temporal integrity
+      };
+
+      await setDoc(doc(db, "orders", orderId), orderDoc);
+      setOrderTracking(orderId);
+      setCheckoutStep("confirm");
+    } catch (err: any) {
+      console.error("Failed to place order in Firestore:", err);
+      try {
+        handleFirestoreError(err);
+      } catch (fmtErr: any) {
+        const payload = JSON.parse(fmtErr.message);
+        alert(`Erreur de paiement Firestore: ${payload.message}\n${payload.details || ""}`);
+      }
+    }
+  };
+
+  const handleFinishCheckout = () => {
+    setCart([]);
+    setCheckoutStep("idle");
+    setCartOpen(false);
+  };
+
+  // Navigate directly to an element anchor ID
+  const handleScrollToId = (id: string) => {
+    setActiveTab("store");
+    setTimeout(() => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 100);
+  };
+
+  // Spotlight Product selection reference
+  const spotlightProduct = products.find(p => p.id === "sienna-lounge") || products[0];
+
+  const isRTL = lang === "ar";
+
   return (
-    <div className="min-h-screen bg-slate-50/50 text-slate-800 selection:bg-indigo-100 selection:text-indigo-900 overflow-x-hidden antialiased font-sans">
+    <div 
+      className={`min-h-screen transition-colors duration-300 ${
+        theme === "black" 
+          ? "bg-slate-950 text-slate-100 selection:bg-[#2d4a22]/30 selection:text-emerald-400" 
+          : "bg-white text-slate-800 selection:bg-[#2d4a22]/10 selection:text-[#2d4a22]"
+      } overflow-x-hidden antialiased font-sans`}
+      dir={isRTL ? "rtl" : "ltr"}
+      id="nexus-root-container"
+    >
       
-      {/* BACKGROUND GLOWS - RECREATES THE LAVENDER GLOW OF THE REFERENCE IMAGE */}
-      <div className="absolute top-0 inset-x-0 h-[850px] overflow-hidden pointer-events-none z-0">
-        <div className="absolute top-[-200px] left-[15%] w-[600px] h-[600px] rounded-full glow-purple"></div>
-        <div className="absolute top-[-100px] right-[10%] w-[550px] h-[550px] rounded-full glow-blue"></div>
-        <div className="absolute top-[300px] left-[30%] w-[500px] h-[500px] rounded-full glow-lavender opacity-60"></div>
+      {/* Premium organic ambient glows exactly matching the reference style */}
+      <div className="absolute top-0 inset-x-0 h-[800px] overflow-hidden pointer-events-none z-0">
+        <div className="absolute top-[-250px] left-[10%] w-[650px] h-[650px] rounded-full glow-purple"></div>
+        <div className="absolute top-[-150px] right-[5%] w-[600px] h-[600px] rounded-full glow-blue"></div>
+        <div className="absolute top-[250px] left-[25%] w-[550px] h-[550px] rounded-full glow-lavender opacity-65"></div>
       </div>
 
-      {/* FLOATING HEADER - STICKY NAV LOOK */}
-      <header className="sticky top-4 z-50 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="bg-white/90 backdrop-blur-md rounded-2xl border border-slate-100/90 sleek-shadow-sm px-6 py-4 flex items-center justify-between transition-all">
+      {/* FLOATING NAVBAR HEADER */}
+      <header className="sticky top-4 z-40 max-w-5xl mx-auto px-4">
+        <div className={`rounded-2xl border px-6 py-4 flex items-center justify-between transition-all sleek-shadow-sm ${
+          theme === "black"
+            ? "bg-slate-900/90 border-slate-800 text-white"
+            : "bg-white/80 border-[#e6eee3] text-slate-850 backdrop-blur-md"
+        }`}>
           
-          {/* Logo with fine custom details */}
+          {/* Logo with Green indicator */}
           <div 
-            onClick={() => handleScroll("hero-top")} 
-            className="flex items-center gap-2 cursor-pointer group"
+            onClick={() => handleScrollToId("store-hero")} 
+            className="flex items-center gap-1.5 cursor-pointer group select-none"
           >
-            <span className="font-sans font-extrabold text-xl tracking-tight text-slate-900 flex items-center gap-1">
-              basecase<span className="inline-block w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>
+            <span className={`font-sans font-black text-xl tracking-tight ${theme === 'black' ? 'text-white' : 'text-slate-900'}`}>
+              nexus<span className="inline-block w-2.5 h-2.5 rounded-full bg-[#2d4a22] ml-0.5 animate-pulse"></span>
             </span>
           </div>
 
-          {/* Desktop Nav Items */}
-          <nav className="hidden md:flex items-center gap-8 text-sm font-semibold text-slate-500">
+          {/* Center navigation */}
+          <nav className="hidden md:flex items-center gap-7 text-xs uppercase tracking-widest font-extrabold text-slate-500">
             <button 
-              onClick={() => handleScroll("how-it-works")} 
-              className="hover:text-slate-900 transition-colors cursor-pointer"
+              onClick={() => handleScrollToId("store-hero")} 
+              className="hover:text-[#2d4a22] hover:dark:text-emerald-400 transition-colors cursor-pointer text-[10px]"
             >
-              Fonctionnement
+              {t.home}
             </button>
             <button 
-              onClick={() => handleScroll("solutions")} 
-              className="hover:text-slate-900 transition-colors cursor-pointer"
+              onClick={() => handleScrollToId("interactive-model-sandbox")} 
+              className="hover:text-[#2d4a22] text-[#2d4a22]/90 hover:dark:text-emerald-400 transition-colors cursor-pointer font-bold flex items-center gap-1 text-[10px]"
             >
-              Solutions
+              {t.atelier} <span className="text-[9px] bg-[#2d4a22]/10 dark:bg-[#2d4a22]/30 px-1 py-0.5 rounded">Custom</span>
             </button>
             <button 
-              onClick={() => handleScroll("pricing")} 
-              className="hover:text-slate-900 transition-colors cursor-pointer"
+              onClick={() => handleScrollToId("pricing-plans")} 
+              className="hover:text-[#2d4a22] hover:dark:text-emerald-400 transition-colors cursor-pointer text-[10px]"
             >
-              Tarifs
+              {t.collection}
             </button>
             <button 
-              onClick={() => handleScroll("faqs")} 
-              className="hover:text-slate-900 transition-colors cursor-pointer"
+              onClick={() => handleScrollToId("faqs-anchor")} 
+              className="hover:text-[#2d4a22] hover:dark:text-emerald-400 transition-colors cursor-pointer text-[10px]"
             >
-              FAQ
+              {t.help}
             </button>
           </nav>
 
-          {/* Action CTA Button */}
-          <div className="hidden sm:flex items-center gap-4">
-            <button 
-              onClick={() => handleScroll("inquiry-form")}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow-xs hover:shadow-lg hover:shadow-indigo-500/10 transition-all cursor-pointer flex items-center gap-1.5"
+          {/* Action trigger items */}
+          <div className="flex items-center gap-3">
+            
+            {/* SETTINGS BUTTON (Contains Multi-language translations, theme colors, currencies toggles) */}
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="p-2.5 bg-[#f4f8f3] dark:bg-slate-800 border border-[#e2eae0] dark:border-slate-700 rounded-xl hover:bg-[#eef5eb] dark:hover:bg-slate-750 cursor-pointer text-slate-800 dark:text-slate-100 transition-all flex items-center gap-1.5 shadow-2xs select-none"
+              title="Paramètres / Settings"
+              id="settings-trigger-btn"
             >
-              Démarrer aujourd'hui
-              <ArrowRight className="w-3.5 h-3.5" />
+              <Sliders className="w-4 h-4 text-[#2d4a22]" />
+              <span className="text-[10px] font-extrabold uppercase tracking-wider hidden md:inline text-slate-705 dark:text-slate-200">
+                {lang === "en" ? "Settings" : lang === "es" ? "Ajustes" : lang === "ar" ? "الإعدادات" : "Paramètres"}
+              </span>
             </button>
-          </div>
 
-          {/* Mobile hamburger menu */}
-          <button 
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)} 
-            className="md:hidden p-1 text-slate-600 hover:text-slate-900"
-          >
-            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-          </button>
-        </div>
-
-        {/* Mobile menu expanded */}
-        <AnimatePresence>
-          {mobileMenuOpen && (
-            <motion.div 
-              initial={{ opacity: 0, y: -15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              className="md:hidden mt-2 bg-white rounded-2xl border border-slate-100 shadow-xl p-5 space-y-4"
-            >
-              <button 
-                onClick={() => handleScroll("how-it-works")} 
-                className="block w-full text-left py-2 font-semibold text-slate-600 hover:text-slate-900"
-              >
-                Fonctionnement
-              </button>
-              <button 
-                onClick={() => handleScroll("solutions")} 
-                className="block w-full text-left py-2 font-semibold text-slate-600 hover:text-slate-900"
-              >
-                Solutions
-              </button>
-              <button 
-                onClick={() => handleScroll("pricing")} 
-                className="block w-full text-left py-2 font-semibold text-slate-600 hover:text-slate-900"
-              >
-                Tarifs
-              </button>
-              <button 
-                onClick={() => handleScroll("faqs")} 
-                className="block w-full text-left py-2 font-semibold text-slate-600 hover:text-slate-900"
-              >
-                FAQ
-              </button>
-              <div className="pt-2 border-t border-slate-100">
-                <button 
-                  onClick={() => handleScroll("inquiry-form")}
-                  className="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-xl text-center text-sm flex items-center justify-center gap-2 shadow-xs"
+            {/* GOOGLE SIGN IN OR USER DISPLAY PROFILE BLOCK */}
+            {authChecking ? (
+              <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 animate-pulse border border-[#e2eae0] dark:border-slate-700"></div>
+            ) : user ? (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setUserDropdownOpen(!userDropdownOpen)}
+                  className="p-1 px-2.5 bg-[#f4f8f3] dark:bg-slate-800 border border-[#e2eae0] dark:border-slate-700 rounded-xl hover:bg-[#eef5eb] dark:hover:bg-slate-750 cursor-pointer text-slate-800 dark:text-slate-100 transition-all flex items-center gap-1.5 shadow-2xs select-none"
+                  id="user-profile-menu-button"
                 >
-                  Démarrer aujourd'hui
-                  <ArrowRight className="w-4 h-4" />
+                  {user.photoURL ? (
+                    <img 
+                      src={user.photoURL} 
+                      alt="User Avatar" 
+                      referrerPolicy="no-referrer"
+                      className="w-5 h-5 rounded-full border border-white"
+                    />
+                  ) : (
+                    <div className="w-5 h-5 bg-[#2d4a22]/10 text-[#2d4a22] rounded-full flex items-center justify-center">
+                      <User className="w-3" />
+                    </div>
+                  )}
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider hidden sm:inline text-slate-700 dark:text-slate-200">{t.myAccount}</span>
+                  <ChevronDown className="w-3 h-3 text-slate-400" />
                 </button>
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+            ) : (
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                className="p-1.5 px-3 bg-white dark:bg-slate-800 border border-[#2d4a22]/20 dark:border-slate-700 hover:border-[#2d4a22] text-[#2d4a22] dark:text-slate-100 font-semibold rounded-xl hover:bg-[#2d4a22]/5 dark:hover:bg-slate-750 cursor-pointer text-xs tracking-wide transition-all flex items-center gap-1 shadow-2xs select-none"
+                id="google-login-trigger"
+              >
+                <User className="w-3.5 h-3.5 text-[#2d4a22]" />
+                <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">{t.login}</span>
+              </button>
+            )}
+
+            {/* Shopping Cart button handle */}
+            <button 
+              onClick={() => setCartOpen(true)}
+              className="relative p-2.5 bg-[#f4f8f3] dark:bg-slate-800 border border-[#e2eae0] dark:border-slate-700 rounded-xl hover:bg-[#eef5eb] dark:hover:bg-slate-750 cursor-pointer text-slate-800 dark:text-slate-100 transition-all flex items-center gap-1.5 shadow-2xs select-none"
+              id="cart-hand-btn"
+            >
+              <ShoppingBag className="w-4 h-4 text-[#2d4a22]" />
+              <span className="text-[10px] font-extrabold uppercase tracking-wider hidden sm:inline text-slate-705 dark:text-slate-200">{t.cart}</span>
+              {cart.length > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 bg-[#2d4a22] text-white font-mono text-[10px] font-bold rounded-full items-center justify-center shadow-md border-2 border-white">
+                  {cart.reduce((sum, item) => sum + item.quantity, 0)}
+                </span>
+              )}
+            </button>
+
+            {/* Admin toggle padlock button - conditionally displayed ONLY to grasdvirus@gmail.com */}
+            {user && user.email === "grasdvirus@gmail.com" && (
+              <button
+                onClick={() => {
+                  setActiveTab(activeTab === "store" ? "admin" : "store");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`text-[10px] uppercase font-extrabold tracking-widest px-4 py-2.5 rounded-xl cursor-pointer transition-all flex items-center gap-2 select-none ${
+                  activeTab === "admin"
+                    ? "bg-[#2d4a22]/10 text-[#2d4a22] border border-[#2d4a22]/20"
+                    : "bg-slate-900 dark:bg-slate-800 hover:bg-slate-850 text-white"
+                }`}
+              >
+                {activeTab === "admin" ? (
+                  <>
+                    <Unlock className="w-3.5 h-3.5" />
+                    {t.store || "Boutique"}
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-3.5 h-3.5" />
+                    {t.admin || "Admin 🔐"}
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
       </header>
 
-      {/* CORE WRAPPER */}
-      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 md:py-24 space-y-20 md:space-y-36">
-
-        {/* HERO SECTION - RECREATES TOP HALF */}
-        <section id="hero-top" className="text-center space-y-8 max-w-3xl mx-auto pt-4 md:pt-10">
-          
-          {/* Active indicator status bar */}
-          <div className="inline-flex items-center gap-2.5 bg-indigo-50/50 border border-indigo-100/40 rounded-full px-4 py-1.5 shadow-2xs">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span className="text-[11px] font-semibold text-indigo-900 font-mono tracking-wide uppercase">
-              2 places restantes pour nos projets de ce trimestre
-            </span>
-          </div>
-
-          {/* Main Title displaying elegant Serif style */}
-          <h1 className="font-sans text-4xl sm:text-5xl md:text-7xl font-extrabold text-slate-900 tracking-tight leading-none">
-            La modélisation financière
-            <span className="block mt-2">
-              purement <span className="font-serif italic font-normal text-indigo-600">réinventée</span> 🌪️
-            </span>
-          </h1>
-
-          {/* Subtext description */}
-          <p className="text-sm md:text-md text-slate-500 max-w-xl mx-auto font-medium">
-            Des plans de modélisation financière clairs pour tous. Interrompez ou annulez à tout moment. Un abonnement mensuel unique, des scénarios sur mesure illimités.
-          </p>
-
-          {/* Call to Actions buttons */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <button 
-              onClick={() => handleScroll("pricing")}
-              className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs uppercase tracking-wider px-8 py-4 rounded-full shadow-lg shadow-indigo-500/10 cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0 transition-all flex items-center justify-center gap-2"
-            >
-              Voir les formules
-              <ArrowRight className="w-4 h-4" />
-            </button>
-            <button 
-              onClick={() => handleScroll("how-it-works")}
-              className="w-full sm:w-auto bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-extrabold text-xs uppercase tracking-wider px-8 py-4 rounded-full transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
-            >
-              Fonctionnement &rarr;
-            </button>
-          </div>
-        </section>
-
-
-        {/* INTERACTIVE STEPPERS SYSTEM - "WE DIDN'T REINVENT THE WHEEL..." */}
-        <section id="how-it-works" className="space-y-12">
-          
-          <div className="text-center space-y-4 max-w-2xl mx-auto">
-            <span className="text-xs font-mono font-bold tracking-widest uppercase text-indigo-500 bg-indigo-50 px-3.5 py-1 rounded-full">
-              Processus
-            </span>
-            <h2 className="font-sans text-3xl md:text-5xl font-extrabold tracking-tight text-slate-900">
-              Nous n'avons pas réinventé la roue.<br />
-              Mais bien la <span className="font-serif italic text-indigo-600 font-normal">modélisation.</span>
-            </h2>
-            <p className="text-xs md:text-sm text-slate-500 max-w-lg mx-auto font-medium leading-relaxed">
-              Découvrez à quel point il est simple de recevoir des analyses, scénarios et de véritables tableaux de bord de précision. Sélectionnez une étape ci-dessous pour tester l'impact en direct sur notre simulateur.
-            </p>
-          </div>
-
-          {/* Steppers Toggle Bar */}
-          <div className="flex flex-wrap items-center justify-center gap-4 max-w-xl mx-auto">
-            {/* Step Toggle 1 */}
-            <button
-              onClick={() => setActiveStep(1)}
-              className={`flex-1 min-w-[130px] flex flex-col items-center gap-2 p-3.5 rounded-xl border font-semibold text-center transition-all cursor-pointer ${
-                activeStep === 1
-                  ? "bg-white border-indigo-600 text-indigo-700 ring-2 ring-indigo-50"
-                  : "bg-slate-50 border-slate-100 text-slate-500 hover:bg-white"
-              }`}
-            >
-              <span className="font-mono text-xs text-slate-400">Étape (1)</span>
-              <span className="text-xs">Abonnement & Brief</span>
-            </button>
-
-            {/* Step Toggle 2 (Highlighted Active) */}
-            <button
-              onClick={() => setActiveStep(2)}
-              className={`flex-1 min-w-[130px] flex flex-col items-center gap-2 p-3.5 rounded-xl border font-semibold text-center transition-all cursor-pointer ${
-                activeStep === 2
-                  ? "bg-white border-indigo-600 text-indigo-700 ring-2 ring-indigo-50"
-                  : "bg-slate-50 border-slate-100 text-slate-500 hover:bg-white"
-              }`}
-            >
-              <span className="font-mono text-xs text-indigo-500">Étape (2)</span>
-              <span className="text-xs">Simulations en Direct</span>
-            </button>
-
-            {/* Step Toggle 3 */}
-            <button
-              onClick={() => setActiveStep(3)}
-              className={`flex-1 min-w-[130px] flex flex-col items-center gap-2 p-3.5 rounded-xl border font-semibold text-center transition-all cursor-pointer ${
-                activeStep === 3
-                  ? "bg-white border-indigo-600 text-indigo-700 ring-2 ring-indigo-50"
-                  : "bg-slate-50 border-slate-100 text-slate-500 hover:bg-white"
-              }`}
-            >
-              <span className="font-mono text-xs text-slate-400">Étape (3)</span>
-              <span className="text-xs">Itérations & Retours</span>
-            </button>
-          </div>
-
-          {/* Dynamic Stepper Display Cards Grid / Accordions */}
-          <div className="mt-8">
-            <AnimatePresence mode="wait">
-              {activeStep === 1 && (
-                <motion.div
-                  key="step-1"
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -15 }}
-                  transition={{ duration: 0.35 }}
-                  className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center max-w-5xl mx-auto"
+      {/* CORE DISPLAY PORT VIEW */}
+      <main className="relative z-10 max-w-5xl mx-auto px-4 py-8 md:py-16 space-y-16 md:space-y-24">
+        
+        {activeTab === "admin" ? (
+          /* ADMIN PORTAL GATEWAY */
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="py-6"
+          >
+            <AdminPortal 
+              products={products}
+              onAddProduct={handleAddNewProduct}
+              onDeleteProduct={handleDeleteProduct}
+              currentUser={user}
+              onGoogleLogin={handleGoogleLogin}
+            />
+          </motion.div>
+        ) : activeTab === "collection" ? (
+          /* DEDICATED COLUMN COLLECTION VIEW */
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-12 py-6 text-left"
+          >
+            {/* Header and Back navigation */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6 text-left">
+              <div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab("store");
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  className="text-[10px] font-mono font-bold text-[#2d4a22] dark:text-emerald-400 flex items-center gap-1.5 hover:underline mb-2.5 cursor-pointer uppercase tracking-wider"
                 >
-                  <div className="lg:col-span-5 space-y-6">
-                    <span className="text-[10px] font-mono tracking-wider font-extrabold uppercase text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded">
-                      Étape (1) — Lancement Immédiat
-                    </span>
-                    <h3 className="text-2xl md:text-3xl font-bold font-sans tracking-tight text-slate-900">
-                      Inscrivez-vous à une formule ou demandez votre projet dès aujourd'hui.
-                    </h3>
-                    <p className="text-xs md:text-sm text-slate-500 leading-relaxed font-sans">
-                      Sélectionnez vos préférences de facturation et accédez instantanément à votre espace projet sur mesure. De là, listez vos demandes, connectez vos sources de données comptables et suivez l'avancement en temps réel.
-                    </p>
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2 text-xs text-slate-600 font-medium">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                        <span>Sans engagement. Suspendez ou stoppez n'importe quand</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-slate-600 font-medium">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                        <span>Un coût fixe clair remplaçant le recrutement coûteux d'un CFO</span>
-                      </div>
+                  &larr; {lang === "en" ? "Back to store" : "Retour au magasin"}
+                </button>
+                <h1 className="font-sans text-3xl font-black text-slate-900 dark:text-white tracking-tight leading-tight">
+                  {lang === 'en' ? "Atelier Design Collection" : lang === 'es' ? "Colección de Diseño" : lang === 'ar' ? "مجموعة المصمم الكاملة" : "La Collection Complète d'Atelier"}
+                </h1>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 pb-1">
+                  {lang === 'en' ? "Browse through our full horizontal double-frame lineup." : "Visualisez et commandez l'intégralité de notre catalogue artistique sous forme de cadres horizontaux doubles."}
+                </p>
+              </div>
+            </div>
+
+            {/* Render 2-card horizontal lineup */}
+            <Pricing 
+              products={products} 
+              onAddToCart={handleAddToCart} 
+              lang={lang} 
+              currency={currency} 
+              layoutMode="collection" 
+            />
+          </motion.div>
+        ) : (
+          /* USER STOREFRONT VIEW */
+          <>
+            {/* HERO COMBINED WITH SPOTLIGHT */}
+            <section id="store-hero" className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center pt-2 md:pt-6">
+              
+              {/* Left Column Description */}
+              <div className="lg:col-span-6 text-left space-y-6 md:space-y-8">
+                
+                {/* Launch badge indicator */}
+                <div className="inline-flex items-center gap-2 bg-[#f4f8f3] dark:bg-slate-900 border border-[#e2eae0] dark:border-slate-800 rounded-full px-3.5 py-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span className="text-[9px] font-mono font-bold tracking-widest uppercase text-[#2d4a22] dark:text-emerald-400">
+                    {t.heroTag}
+                  </span>
+                </div>
+
+                {/* Elegant Headline exactly matching user request style */}
+                <h1 className="font-sans text-4xl sm:text-5xl md:text-6xl font-black text-slate-900 dark:text-white tracking-tight leading-[1.08]">
+                  {siteConfig?.heroTitle || t.heroTitle}<br />
+                  <span className="font-serif italic font-normal text-[#2d4a22] dark:text-emerald-450">{siteConfig?.heroSub || t.heroSub}</span>
+                </h1>
+
+                <p className="text-xs md:text-sm text-slate-500 dark:text-slate-400 font-medium leading-relaxed max-w-md">
+                  {siteConfig?.heroDesc || t.heroDesc}
+                </p>
+
+                {/* Main Action CTAs */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3.5">
+                  <button 
+                    type="button"
+                    onClick={() => handleScrollToId("pricing-plans")}
+                    className="bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-[10px] uppercase tracking-widest px-7 py-4 rounded-xl shadow-md cursor-pointer transition-all flex items-center justify-center gap-2 select-none"
+                  >
+                    {t.heroViewCollection}
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => handleScrollToId("interactive-model-sandbox")}
+                    className="bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-extrabold text-[10px] uppercase tracking-widest px-7 py-4 rounded-xl transition-all cursor-pointer text-center select-none"
+                  >
+                    {t.heroStartAtelier}
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-5 pt-2 border-t border-slate-150 dark:border-slate-800">
+                  <div className="text-left font-sans">
+                    <div className="text-lg font-mono font-bold text-slate-900 dark:text-white">4.9/5</div>
+                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-slate-400">
+                      {lang === 'en' ? "Atelier Ratings" : lang === 'es' ? "Notas del Taller" : lang === 'ar' ? "تقييم المشغل" : "Notes d'Ateliers"}
                     </div>
                   </div>
+                  <div className="h-6 w-px bg-slate-200 dark:bg-slate-800"></div>
+                  <div className="text-left font-sans">
+                    <div className="text-lg font-mono font-bold text-slate-900 dark:text-white">100%</div>
+                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-slate-400">
+                      {lang === 'en' ? "FSC Joinery" : lang === 'es' ? "Especialismo FSC" : lang === 'ar' ? "نجارة فاخرة FSC" : "Ébénisterie FSC"}
+                    </div>
+                  </div>
+                  <div className="h-6 w-px bg-slate-200 dark:bg-slate-800"></div>
+                  <div className="text-left">
+                    <div className="text-lg font-mono font-bold text-[#2d4a22] dark:text-emerald-450">WELCOME10</div>
+                    <div className="text-[9px] font-mono font-bold uppercase tracking-wide text-[#2d4a22] dark:text-emerald-450">
+                      {lang === 'en' ? "Code -10% Active" : lang === 'es' ? "Código -10% Activo" : lang === 'ar' ? "خصم ترويجي نشط -10%" : "Code -10% Active"}
+                    </div>
+                  </div>
+                </div>
 
-                  {/* Step visual Mockup Card */}
-                  <div className="lg:col-span-7 bg-white border border-slate-100/90 rounded-3xl sleek-shadow-lg p-6 md:p-8 space-y-5 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50/50 rounded-full blur-3xl pointer-events-none"></div>
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              </div>
+
+              {/* Right Column: Spotlight Detailed Customizer Card */}
+              <div className="lg:col-span-6">
+                {spotlightProduct ? (
+                  <div className="bg-[#fcfdfb] dark:bg-slate-900 border border-[#e6eee3] dark:border-slate-800 rounded-[2rem] p-6 lg:p-7 space-y-5 text-left sleek-shadow-md relative overflow-hidden">
+                    
+                    {/* Background Soft Studio shadow glow */}
+                    <div className="absolute top-0 right-0 w-36 h-36 bg-[#2d4a22]/10 rounded-full blur-3xl pointer-events-none"></div>
+
+                    {/* Spotlight header */}
+                    <div className="flex items-center justify-between border-b border-[#e6eee3] dark:border-slate-800 pb-3 z-10 relative">
                       <div>
-                        <span className="text-[10px] font-mono font-bold text-indigo-600 block uppercase">Espace Projet Client</span>
-                        <h4 className="text-sm font-bold text-slate-800">Abonnement FP&A Mensuel</h4>
+                        <span className="text-[9px] font-mono font-bold text-[#2d4a22] dark:text-[#84a98c] uppercase tracking-widest">
+                          {lang === 'en' ? "Featured Today" : lang === 'es' ? "En Destacado Hoy" : lang === 'ar' ? "تصميم متميز للارتداء" : "En Vedette aujourd'hui"}
+                        </span>
+                        <h2 className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">{spotlightProduct.name}</h2>
                       </div>
-                      <span className="text-xs font-mono bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full font-bold">
-                        ● Brief Lancé
+                      <span className="bg-[#fcf5eb] dark:bg-slate-850 text-[#b45309] dark:text-amber-450 text-[9px] font-mono font-bold px-2 py-1 rounded-full uppercase tracking-wider shadow-2xs">
+                        {lang === 'en' ? "Catalog Masterpiece" : lang === 'es' ? "Obra maestra" : lang === 'ar' ? "تحفة فنية فريدة" : "Chef d'œuvre du catalogue"}
                       </span>
                     </div>
 
-                    <div className="bg-slate-50/70 rounded-xl p-4 border border-slate-100 space-y-3">
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="font-semibold text-slate-600">Demande active :</span>
-                        <span className="font-mono bg-indigo-50 text-indigo-700 py-0.5 px-2 rounded font-semibold">
-                          Scenario_Dilution_Serie_A.xlsx
+                    {/* Image visual slider */}
+                    <div className="h-48 rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-950 relative group/hero">
+                      <img 
+                        src={spotlightProduct.image} 
+                        alt={spotlightProduct.name}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover/hero:scale-105" 
+                      />
+                      <div className="absolute inset-0 bg-linear-to-t from-slate-950/40 via-transparent to-transparent"></div>
+                      <div className="absolute bottom-3 left-3 text-xs text-white font-mono font-semibold">
+                        {lang === 'en' ? "Designer Edition • Polished Brass legs" : lang === 'es' ? "Diseño Premium • Patas Doradas" : lang === 'ar' ? "تصميم فاخر • كراسي منسقة ذهبية" : "Designer edition • Pieds Laiton poli"}
+                      </div>
+                    </div>
+
+                    {/* Quick custom options */}
+                    <div className="space-y-3 pt-1 text-left">
+                      
+                      {/* Interactive colors swatches */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-mono tracking-wider font-bold text-slate-400 dark:text-slate-500">
+                          {lang === 'en' ? "Shades:" : lang === 'es' ? "Tonos:" : lang === 'ar' ? "درجات الألوان :" : "Nuancier :"} <strong className="text-slate-700 dark:text-slate-205 font-sans font-medium">{spotlightProduct.colors[spotlightColorIdx]?.name}</strong>
+                        </span>
+                        
+                        <div className="flex gap-2">
+                          {spotlightProduct.colors.map((col, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => setSpotlightColorIdx(idx)}
+                              className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all cursor-pointer ${
+                                spotlightColorIdx === idx
+                                  ? "border-[#2d4a22] ring-2 ring-[#e6eee3] scale-105"
+                                  : "border-slate-200 dark:border-slate-700 hover:border-slate-400"
+                              }`}
+                              title={col.name}
+                            >
+                              <span className="w-3 h-3 rounded-full block border border-black/10" style={{ backgroundColor: col.hex }}></span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Quantity stepping matches Image mockup precisely */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-mono tracking-wider font-bold text-slate-400 dark:text-slate-500">
+                          {lang === 'en' ? "Select Quantity" : lang === 'es' ? "Cantidad" : lang === 'ar' ? "تحديد كمية الطلب" : "Sélectionner quantité"}
+                        </span>
+                        
+                        <div className="flex items-center bg-[#f4f8f3] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 rounded-xl px-2 py-1">
+                          <button
+                            type="button"
+                            onClick={() => setSpotlightQty(Math.max(1, spotlightQty - 1))}
+                            className="p-1 text-[#2d4a22] hover:text-[#1a2d15] cursor-pointer"
+                          >
+                            <Minus className="w-3.5 h-3.5 stroke-[3]" />
+                          </button>
+                          
+                          <span className="font-mono text-xs font-bold px-3 text-slate-805 dark:text-slate-100">
+                            {spotlightQty}
+                          </span>
+                          
+                          <button
+                            type="button"
+                            onClick={() => setSpotlightQty(spotlightQty + 1)}
+                            className="p-1 text-[#2d4a22] hover:text-[#1a2d15] cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                          </button>
+                        </div>
+                      </div>
+
+                    </div>
+
+                    {/* Direct Buy button */}
+                    <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-4 text-left">
+                      <div>
+                        <span className="text-[9px] uppercase font-mono tracking-wider font-bold text-slate-400 block">{lang === 'en' ? "Subtotal" : lang === 'es' ? "Total" : lang === 'ar' ? "الإجمالي" : "Total"}</span>
+                        <span className="text-xl font-mono font-bold text-slate-900 dark:text-white leading-none">
+                          {formatPrice(spotlightProduct.price * spotlightQty, currency)}
                         </span>
                       </div>
-                      <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
-                        <div className="bg-indigo-600 h-full w-[45%]"></div>
-                      </div>
-                      <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                        <span>Reçu aujourd'hui</span>
-                        <span>Livraison estimée : 24-48h</span>
-                      </div>
-                    </div>
 
-                    {/* Simple Subscribe button action wrapper */}
-                    <button 
-                      onClick={() => handleScroll("pricing")}
-                      className="w-full bg-slate-900 text-white font-bold py-3 px-4 rounded-xl text-center text-xs tracking-wider uppercase hover:bg-slate-800 transition-colors cursor-pointer"
-                    >
-                      Découvrir nos abonnements &rarr;
-                    </button>
-                  </div>
-                </motion.div>
-              )}
-
-              {activeStep === 2 && (
-                <motion.div
-                  key="step-2"
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -15 }}
-                  transition={{ duration: 0.35 }}
-                  className="space-y-6 max-w-5xl mx-auto"
-                >
-                  <div className="text-center md:text-left space-y-3 max-w-xl">
-                    <span className="text-[10px] font-mono tracking-wider font-extrabold uppercase text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded inline-block">
-                      Étape (2) — Simulateur Interactif en Direct
-                    </span>
-                    <h3 className="text-2xl font-bold font-sans tracking-tight text-slate-900">
-                      Modèles automatisés intelligents & projections de cohortes détaillées.
-                    </h3>
-                    <p className="text-xs text-slate-500 font-sans leading-relaxed">
-                      Modifiez les différentes variables ci-dessous. Ajustez vos objectifs de MRR, d'acquisition (CAC) ou de perte de clients (Churn), et observez les calculs financiers sous-jacents se mettre à jour instantanément.
-                    </p>
-                  </div>
-
-                  {/* Render the full interactive financial model playground */}
-                  <InteractiveModel />
-                </motion.div>
-              )}
-
-              {activeStep === 3 && (
-                <motion.div
-                  key="step-3"
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -15 }}
-                  transition={{ duration: 0.35 }}
-                  className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center max-w-5xl mx-auto"
-                >
-                  <div className="lg:col-span-5 space-y-6">
-                    <span className="text-[10px] font-mono tracking-wider font-extrabold uppercase text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded">
-                      Étape (3) — Itérations Ultra-Rapides
-                    </span>
-                    <h3 className="text-2xl md:text-3xl font-bold font-sans tracking-tight text-slate-900">
-                      Nous peaufinons le modèle jusqu'à entière satisfaction.
-                    </h3>
-                    <p className="text-xs md:text-sm text-slate-500 leading-relaxed font-sans">
-                      Besoin d’adapter l'agenda des embauches ? De simuler une nouvelle trajectoire de prix ou de séparer le chiffre d'affaires par plan d'abonnement ? Échangez simplement avec votre analyste dédié via votre canal Slack. Les révisions sont illimitées et livrées rapidement.
-                    </p>
-                    <div className="border-l-2 border-indigo-500 pl-4 py-1 italic text-xs text-slate-500">
-                      "Passer de nos services financiers traditionnels à Basecase a réduit le délai de livraison de nos modèles de 10 jours à moins de 30 heures."
-                    </div>
-                  </div>
-
-                  {/* Step 3 Visual Chat Simulation Mockup */}
-                  <div className="lg:col-span-7 bg-white border border-slate-100/90 rounded-3xl sleek-shadow-lg overflow-hidden flex flex-col justify-between min-h-[380px]">
-                    <div className="bg-slate-950 text-white px-5 py-4 flex items-center justify-between border-b border-slate-900">
-                      <div className="flex items-center gap-3">
-                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                        <div>
-                          <p className="text-xs font-bold font-sans">#basecase-collaborateurs</p>
-                          <p className="text-[10px] text-slate-400 font-mono">Canal de Conseil Dédié</p>
-                        </div>
-                      </div>
-                      <span className="text-[9px] font-mono bg-indigo-900 px-2 py-0.5 rounded text-indigo-200">
-                        Synchro en Direct
-                      </span>
-                    </div>
-
-                    {/* Chat Feed */}
-                    <div className="p-5 space-y-4 flex-1 overflow-y-auto max-h-[250px] bg-slate-50/40">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 text-[10px] text-slate-400 font-semibold font-mono">
-                          <span>Vous (Fondateur)</span>
-                          <span>15:14</span>
-                        </div>
-                        <div className="bg-indigo-600 text-white text-xs p-3.5 rounded-2xl rounded-tr-none max-w-sm ml-auto">
-                          Hello l'équipe ! Quelques investisseurs souhaiteraient voir un scénario pessimiste. Calculons une simulation avec un CAC 15% plus élevé et une croissance plus lente de 5%. Quel impact sur notre trésorerie disponible ?
-                        </div>
-                      </div>
-
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 text-[10px] text-slate-400 font-semibold font-mono">
-                          <span>Analyste Principal Basecase</span>
-                          <span>15:55</span>
-                        </div>
-                        <div className="bg-white border border-slate-100 text-slate-700 text-xs p-3.5 rounded-2xl rounded-tl-none max-w-sm shadow-2xs space-y-2">
-                          <p>C'est en cours ! J'ai mis à jour la table de sensibilité de trésorerie sur vos projections de conseil. Voici les principaux changements :</p>
-                          <div className="bg-slate-50 p-2 rounded-lg border border-slate-100 text-[11px] font-mono space-y-1 text-slate-500">
-                            <div>• Trésorerie (Runway) : 18 mois &rarr; 14 mois</div>
-                            <div>• Cible de financement recommandée : 1.8M $</div>
-                          </div>
-                          <span className="text-[10px] text-indigo-600 font-semibold flex items-center gap-1 mt-2">
-                            <FileSpreadsheet className="w-3.5 h-3.5" />
-                            Scenario_Worstcase_Board_v2.xlsx
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Chat Input simulator */}
-                    <div className="p-3 border-t border-slate-100 bg-white flex items-center gap-2">
-                      <input 
-                        type="text" 
-                        disabled
-                        placeholder="Demandes de révisions illimitées sur toutes les formules..." 
-                        className="w-full text-xs bg-slate-50 text-slate-400 px-3 py-2.5 rounded-xl border border-slate-100 outline-none" 
-                      />
-                      <button disabled className="p-2 bg-slate-100 text-slate-400 rounded-xl cursor-not-allowed">
-                        <ArrowRight className="w-4 h-4" />
+                      <button
+                        type="button"
+                        onClick={handleSpotlightAddToCart}
+                        className={`flex-1 py-3 px-6 rounded-xl text-xs uppercase tracking-widest font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          spotlightAdded
+                            ? "bg-emerald-600 text-white animate-scaleUp"
+                            : "bg-[#2d4a22] hover:bg-[#1a2d15] text-white shadow-sm"
+                        }`}
+                      >
+                        <ShoppingBag className="w-3.5 h-3.5" />
+                        {spotlightAdded ? t.addedTitle : lang === 'en' ? "Instant Buy" : lang === 'es' ? "Comprar Ahora" : lang === 'ar' ? "شراء فوري" : "Acheter"}
                       </button>
                     </div>
+
                   </div>
-                </motion.div>
+                ) : null}
+              </div>
+
+            </section>
+
+            {/* PRODUCT CATALOG FEED */}
+            <section className="space-y-6 pt-4 border-t border-slate-50 dark:border-slate-805">
+              <div className="text-left space-y-2">
+                <span className="text-[10px] uppercase font-mono font-bold tracking-widest text-[#2d4a22] dark:text-emerald-450">
+                  {lang === 'en' ? "Atelier Catalog" : lang === 'es' ? "Catálogo Boutique" : lang === 'ar' ? "كتالوج الورشة" : "Catalogue Magasin"}
+                </span>
+                <h2 className="font-sans text-2xl md:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+                  {lang === 'en' ? "Master Seating Pieces" : lang === 'es' ? "El Mobiliario de Autor" : lang === 'ar' ? "أثاث ومقاعد المشغل" : "Le Mobilier d'Atelier"}
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-405 font-medium leading-relaxed font-sans">
+                  {lang === 'en' ? "Explore our exclusive handcrafted high-end premium seats, individually sculpted and guaranteed for life." : lang === 'es' ? "Nuestros asientos exclusivos están hechos a medida con materiales de calidad." : lang === 'ar' ? "تصفح إبداعاتنا الحصرية للمقاعد والأثاث الفاخر المصنوع يدوياً قطعة بقطعة مع ضمان طويل المدى." : "Parcourez nos créations exclusives de mobilier haut de gamme, fabriquées à la pièce et garanties à vie."}
+                </p>
+              </div>
+
+              {/* Grid with category filters and instant Search */}
+              <Pricing 
+                products={products.length > 5 ? products.slice(0, 5) : products} 
+                onAddToCart={handleAddToCart} 
+                lang={lang} 
+                currency={currency} 
+              />
+
+              {products.length > 5 && (
+                <div className="flex justify-center pt-8">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab("collection");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="flex items-center gap-2 px-8 py-3 bg-[#fcfdfc] hover:bg-[#2d4a22] text-[#2d4a22] hover:text-white dark:bg-slate-900 dark:hover:bg-[#2d4a22] dark:border-slate-800 border border-[#2d4a22] font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-sm cursor-pointer hover:-translate-y-0.5"
+                  >
+                    <span>{lang === "en" ? "See complete collection" : lang === "es" ? "Ver colección completa" : lang === "ar" ? "مشاهدة المجموعة الكاملة" : "Voir plus d'articles &rarr;"}</span>
+                  </button>
+                </div>
               )}
-            </AnimatePresence>
-          </div>
-        </section>
+            </section>
 
-
-        {/* VALUE PROPOSITIONS SECTION 2 - "THE ONLY FINANCIAL MODELING SERVICE YOU'LL NEED" */}
-        <section id="solutions" className="space-y-12">
-          
-          <div className="text-center space-y-4 max-w-2xl mx-auto">
-            <span className="text-xs font-mono font-bold tracking-widest uppercase text-indigo-500 bg-indigo-50 px-3.5 py-1 rounded-full">
-              Piliers
-            </span>
-            <h2 className="font-sans text-3xl md:text-5xl font-extrabold tracking-tight text-slate-900">
-              Le seul service de modélisation<br />
-              <span className="font-serif italic text-indigo-600 font-normal">financière dont vous aurez besoin.</span>
-            </h2>
-            <p className="text-xs md:text-sm text-slate-500 max-w-md mx-auto leading-relaxed">
-              Nous condensons toute la puissance d'un pôle de planification financière d'entreprise au sein d'un tableau de bord de projet simple.
-            </p>
-          </div>
-
-          {/* Grid of 4 polished features */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-            
-            {/* Feature 1 */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-100/90 sleek-shadow-sm hover:sleek-shadow-md transition-all space-y-4 relative overflow-hidden group">
-              <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500 group-hover:bg-indigo-600 transition-colors"></div>
-              <div className="p-3 bg-indigo-50 rounded-xl text-indigo-600 w-fit">
-                <FileSpreadsheet className="w-5 h-5" />
+            {/* INDIVIDUALIZED CUSTOMIZER ATELIER */}
+            <section className="space-y-6 pt-6">
+              <div className="text-left space-y-2">
+                <span className="text-[10px] uppercase font-mono font-bold tracking-widest text-[#2d4a22] dark:text-emerald-450">
+                  {lang === 'en' ? "Bespoke Manufacturing" : lang === 'es' ? "Hecho a Medida" : lang === 'ar' ? "صناعة وتفصيل يدوي" : "Manufacture sur-mesure"}
+                </span>
+                <h2 className="font-sans text-2xl md:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+                  {lang === 'en' ? "Orris Configurator" : lang === 'es' ? "Modelador Orris" : lang === 'ar' ? "موجّه التخصيص لمنفاذ أوريس" : "Le Simulateur Orris"}
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-405 font-medium font-sans">
+                  {lang === 'en' ? "Select your eco-certified raw materials, add footrests or lumbar support cushions, and see your customized creation update instantly." : lang === 'es' ? "Diseñe su propia configuración y verifique la simulación en tiempo real." : lang === 'ar' ? "اختر المواد الصديقة للبيئة، أضف مسامير القدم أو وسائد الأمان لراحتك وتحقق من النتيجة حياً." : "Incrustez vos matières premières éco-certifiées, ajoutez des ottomanes ou des coussins et validez votre configuration unique en direct."}
+                </p>
               </div>
-              <h3 className="text-md font-bold text-slate-900 font-sans">Formats Sources Modifiables</h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Recevez des fichiers Microsoft Excel ou Google Sheets entièrement modifiables, sans formule verrouillée ni macros opaques. Vous êtes à 100 % propriétaire.
-              </p>
-            </div>
 
-            {/* Feature 2 */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-100/90 sleek-shadow-sm hover:sleek-shadow-md transition-all space-y-4 relative overflow-hidden group">
-              <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500 group-hover:bg-indigo-600 transition-colors"></div>
-              <div className="p-3 bg-violet-50 rounded-xl text-violet-600 w-fit">
-                <User className="w-5 h-5" />
+              {/* Chair Customizer */}
+              <InteractiveModel onAddToCart={handleAddToCart} lang={lang} currency={currency} />
+            </section>
+
+            {/* REVIEWS TESTIMONIALS CAROUSEL */}
+            <ReviewsCarousel lang={lang} currentUser={user} />
+
+            {/* FREQUENTLY ASKED QUESTIONS SECTION */}
+            <section id="faqs-anchor" className="space-y-6">
+              <div className="text-left space-y-2 max-w-xl">
+                <span className="text-[10px] uppercase font-mono font-bold tracking-widest text-[#2d4a22] dark:text-emerald-450">
+                  {lang === 'en' ? "Assistance Center" : lang === 'es' ? "Centro de Soporte" : lang === 'ar' ? "الدعم الفني واللوجستي" : "Assistance"}
+                </span>
+                <h2 className="font-sans text-2xl md:text-3xl font-black text-slate-900 dark:text-white tracking-tight">{t.faqTitle}</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-405 font-medium leading-relaxed font-sans">
+                  {lang === 'en' ? "Want to know more about shipping of large wooden crates, our eco-friendly craftsmanship, or showroom booking? Read our answers below." : lang === 'es' ? "¿Desea saber más sobre los envíos, nuestro showroom o garantía? Consulte respuestas rápidas." : lang === 'ar' ? "هل تود معرفة المزيد عن تسليم القطع الضخمة، نجارتنا الصديقة للبيئة أو المعرض؟ يرجى قراءة التفاصيل في الأسفل." : "Vous souhaitez en savoir plus sur l'expédition de pièces imposantes, notre ébénisterie éco-responsable ou l'essai en showroom ? Retrouvez nos réponses claires ci-dessous."}
+                </p>
               </div>
-              <h3 className="text-md font-bold text-slate-900 font-sans">Analystes d'Élite</h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Votre projet est piloté directement par d'anciens banquiers d'affaires, directeurs en capital-risque (VC) et directeurs financiers expérimentés.
-              </p>
-            </div>
 
-            {/* Feature 3 */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-100/90 sleek-shadow-sm hover:sleek-shadow-md transition-all space-y-4 relative overflow-hidden group">
-              <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500 group-hover:bg-indigo-600 transition-colors"></div>
-              <div className="p-3 bg-indigo-50 rounded-xl text-indigo-600 w-fit">
-                <Clock className="w-5 h-5" />
-              </div>
-              <h3 className="text-md font-bold text-slate-900 font-sans">Réactivité de Pointe</h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Une livraison moyenne sous 48h. Évitez les réunions de cadrage interminables et formalisez vos demandes directement dans votre outil.
-              </p>
-            </div>
-
-            {/* Feature 4 */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-100/90 sleek-shadow-sm hover:sleek-shadow-md transition-all space-y-4 relative overflow-hidden group">
-              <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500 group-hover:bg-indigo-600 transition-colors"></div>
-              <div className="p-3 bg-violet-50 rounded-xl text-violet-600 w-fit">
-                <Layers className="w-5 h-5" />
-              </div>
-              <h3 className="text-md font-bold text-slate-900 font-sans">Besoins Flexibles</h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Ajoutez autant de demandes ou de scénarios que nécessaire. Réorganisez vos priorités ou mettez votre formule en pause selon vos besoins financiers.
-              </p>
-            </div>
-            
-          </div>
-        </section>
-
-
-        {/* "AT BASECASE..." STORY SECTION WITH ALUMNI TESTIMONIALS */}
-        <section className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center bg-slate-50 border border-slate-100/90 sleek-shadow-md p-8 md:p-12 rounded-3xl">
-          
-          <div className="lg:col-span-5 space-y-6">
-            <span className="text-xs font-mono font-bold tracking-widest uppercase text-indigo-600 bg-indigo-50 px-3.5 py-1 rounded-full">
-              Notre Vision
-            </span>
-            <div className="space-y-3">
-              <h3 className="font-serif italic text-3xl md:text-4xl text-slate-900 font-normal">Chez basecase,</h3>
-              <p className="text-sm font-semibold text-slate-800 tracking-tight leading-relaxed">
-                Nous pensons que les jeunes entreprises innovantes ne devraient pas avoir à choisir entre des cabinets de conseil lents et coûteux ou des freelances non certifiés.
-              </p>
-            </div>
-            <p className="text-xs text-slate-500 leading-relaxed font-sans">
-              Les cabinets traditionnels sont lents, facturent à l’heure et consomment une énergie précieuse lors des phases critiques de financement. Basecase élimine ces frictions grâce à un abonnement mensuel transparent et hautement interactif. Mettez à jour vos scénarios à minuit, recevez vos livrables en quelques jours et pilotez en toute confiance.
-            </p>
-            <div>
-              <button 
-                onClick={() => handleScroll("pricing")}
-                className="inline-flex items-center gap-1 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold uppercase tracking-wider px-6 py-3.5 rounded-xl cursor-pointer shadow-sm transition-colors"
-              >
-                Découvrir nos Formules &rarr;
-              </button>
-            </div>
-          </div>
-
-          {/* Testimonial profile cards wrapper */}
-          <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-6">
-            
-            {/* Portrait Card 1 */}
-            <div className="bg-white rounded-2xl border border-slate-100/90 p-6 flex flex-col justify-between space-y-6 sleek-shadow-sm hover:sleek-shadow-md transition-all">
-              <p className="text-xs text-slate-600 italic leading-relaxed">
-                "Nous avions trois calculs de scénarios complexes à présenter à nos investisseurs. Basecase a modélisé l'ensemble de notre SaaS et a répondu aux questions des investisseurs en moins de 48 heures."
-              </p>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-indigo-600 text-white font-extrabold text-sm flex items-center justify-center font-mono shadow-inner shadow-indigo-700">
-                  MP
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold font-sans text-slate-900">Michael Pierce</h4>
-                  <p className="text-[10px] text-slate-400 font-mono">Fondateur, Pierce Ventures</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Portrait Card 2 */}
-            <div className="bg-white rounded-2xl border border-slate-100/90 p-6 flex flex-col justify-between space-y-6 sleek-shadow-sm hover:sleek-shadow-md transition-all">
-              <p className="text-xs text-slate-600 italic leading-relaxed">
-                "La possibilité de suspendre l'abonnement change absolument tout. Nous l'avons mis en pause après avoir modélisé notre Série A, puis réactivé 4 mois plus tard pour notre audit (due diligence)."
-              </p>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-violet-600 text-white font-extrabold text-sm flex items-center justify-center font-mono shadow-inner shadow-violet-700">
-                  SJ
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold font-sans text-slate-900">Sarah Jenkins</h4>
-                  <p className="text-[10px] text-slate-400 font-mono">Responsable FP&A, Cloudflow Inc.</p>
-                </div>
-              </div>
-            </div>
-
-          </div>
-        </section>
-
-
-        {/* PRICING ENGINE - "PRICES MATCH YOUR GROWTH" */}
-        <section id="pricing" className="space-y-12">
-          
-          <div className="text-center space-y-4 max-w-2xl mx-auto">
-            <span className="text-xs font-mono font-bold tracking-widest uppercase text-indigo-500 bg-indigo-50 px-3.5 py-1 rounded-full">
-              Tarifs
-            </span>
-            <h2 className="font-sans text-3xl md:text-5xl font-extrabold tracking-tight text-slate-900">
-              Des structures tarifaires adaptées<br />
-              <span className="font-serif italic text-indigo-600 font-normal">à votre croissance.</span>
-            </h2>
-            <p className="text-xs md:text-sm text-slate-500 max-w-md mx-auto leading-relaxed">
-              Trouvez la formule parfaite pour les objectifs de votre organisation. Changez, suspendez ou annulez à tout moment.
-            </p>
-          </div>
-
-          <Pricing />
-        </section>
-
-
-        {/* DETAILED LEAD INITIATOR INTAKE-FORM */}
-        <section id="inquiry-form" className="scroll-mt-6">
-          <LeadForm />
-        </section>
-
-
-        {/* FAQS SECTION */}
-        <section id="faqs" className="space-y-12 scroll-mt-6">
-          <div className="text-center space-y-4 max-w-xl mx-auto">
-            <span className="text-xs font-mono font-bold tracking-widest uppercase text-indigo-500 bg-indigo-50 px-3.5 py-1 rounded-full">
-              Base de Connaissances
-            </span>
-            <h2 className="font-sans text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900">
-              Questions <span className="font-serif italic text-indigo-600 font-normal">Fréquentes</span>
-            </h2>
-            <p className="text-xs md:text-sm text-slate-500 max-w-sm mx-auto">
-              Paramètres et explications simples concernant nos abonnements, essais, modèles et livrables.
-            </p>
-          </div>
-
-          <FAQ />
-        </section>
+              {/* Accordion list */}
+              <FAQ lang={lang} customFaqs={siteConfig?.faq} />
+            </section>
+          </>
+        )}
 
       </main>
 
-      {/* FOOTER SECTION */}
-      <footer className="bg-slate-900 text-slate-400 border-t border-slate-800 mt-24">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-8 md:space-y-12">
+      {/* FOOTER COOPERATIVE PANEL */}
+      <footer className="bg-slate-50 dark:bg-slate-900/40 border-t border-[#e6eee3] dark:border-slate-800 py-12 md:py-16 mt-20 select-none text-left">
+        <div className="max-w-5xl mx-auto px-4 grid grid-cols-1 md:grid-cols-3 gap-8 text-xs font-sans text-slate-500 dark:text-slate-400">
           
-          {/* Top Half */}
-          <div className="flex flex-col md:flex-row items-start justify-between gap-8 border-b border-slate-800 pb-8">
-            <div className="space-y-3.5 max-w-sm">
-              <span className="font-sans font-extrabold text-xl tracking-tight text-white flex items-center gap-1.5">
-                basecase<span className="block w-2 h-2 rounded-full bg-indigo-500"></span>
-              </span>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Abonnement de modélisation financière d'élite et conseil en transaction. Conçu par d'anciens directeurs FP&A chevronnés pour les entreprises modernes.
-              </p>
-              <div className="flex items-center gap-2.5 bg-slate-950 px-3.5 py-2 rounded-xl text-slate-500 text-[10px] font-mono w-fit">
-                <Clock className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Heure Système Active : 2026-05-26 (UTC)</span>
-              </div>
-            </div>
+          <div className="space-y-3">
+            <h4 className="font-sans font-black text-sm tracking-tight text-slate-950 dark:text-white flex items-center gap-1.5 justify-start">
+              nexus<span className="w-2.5 h-2.5 rounded-full bg-[#2d4a22] inline-block"></span>
+            </h4>
+            <p className="leading-relaxed font-medium">
+              {siteConfig?.footerAbout || (lang === 'en' ? "Artistic carpentry atelier and manufacturer of premium ergonomic comfort seating. All materials originate from state-certified sustainable forests with Retro-Scandinavian design." : lang === 'es' ? "Taller de carpintería artesanal de gran confort inspirado en corrientes nórdicas." : lang === 'ar' ? "ورشة نجارة فنية عالية الجودة لتصنيع المقاعد الوظيفية المريحة. جميع موادنا مستخلصة من غابات مستدامة." : "Atelier d'ébénisterie d'art et de confection d'assises ergonomiques de grand confort. Nos matières premières proviennent de forêts certifiées à gestion durable. Cabinet d'inspiration rétro-scandinave.")}
+            </p>
+            <p className="text-[10px] font-mono text-slate-400 dark:text-slate-550">
+              {lang === 'en' ? "Classic Retro-Scandinavian inspired studio." : lang === 'es' ? "Estilo nórdico retro-escandinavo." : lang === 'ar' ? "ستوديو معاصر مستوحى من الذوق الاسكندنافي القديم." : "Cabinet d'inspiration rétro-scandinave."}
+            </p>
+          </div>
 
-            {/* Quick Links Nav */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-8 text-xs font-semibold">
-              <div className="space-y-3">
-                <p className="text-slate-200 uppercase tracking-widest text-[9px] font-mono font-bold">Services</p>
-                <ul className="space-y-2 text-slate-400 font-medium">
-                  <li><button onClick={() => handleScroll("how-it-works")} className="hover:text-white transition-colors cursor-pointer text-left">Fonctionnement</button></li>
-                  <li><button onClick={() => handleScroll("solutions")} className="hover:text-white transition-colors cursor-pointer text-left">Solutions sur Mesure</button></li>
-                  <li><button onClick={() => handleScroll("pricing")} className="hover:text-white transition-colors cursor-pointer text-left">Formules d'Abonnement</button></li>
-                </ul>
-              </div>
-
-              <div className="space-y-3">
-                <p className="text-slate-200 uppercase tracking-widest text-[9px] font-mono font-bold">Contact</p>
-                <ul className="space-y-2 text-slate-400 font-medium">
-                  <li><span className="font-mono text-[11px] text-slate-300">grasdvirus@gmail.com</span></li>
-                  <li><span className="font-sans text-xs">Bureau Principal, Londres, UK</span></li>
-                  <li><button onClick={() => handleScroll("inquiry-form")} className="text-indigo-400 hover:text-indigo-300 font-bold">Demander un Rappel &rarr;</button></li>
-                </ul>
-              </div>
-
-              <div className="space-y-3 col-span-2 sm:col-span-1">
-                <p className="text-slate-200 uppercase tracking-widest text-[9px] font-mono font-bold">Légal</p>
-                <ul className="space-y-2 text-slate-400 font-medium">
-                  <li><a href="#terms" className="hover:text-white transition-colors font-medium">Conditions d'Utilisation</a></li>
-                  <li><a href="#privacy" className="hover:text-white transition-colors font-medium">Politique de Confidentialité</a></li>
-                </ul>
-              </div>
+          <div className="space-y-3 text-left">
+            <h4 className="text-[10px] font-mono uppercase font-bold tracking-wider text-slate-800 dark:text-slate-350">
+              {lang === 'en' ? "Support & Logistics" : lang === 'es' ? "Soporte de Envíos" : lang === 'ar' ? "الدعم الفني والتسليم" : "Support & Livraison"}
+            </h4>
+            <p className="leading-relaxed font-medium">
+              {siteConfig?.footerContact || (lang === 'en' ? "Secure global express shipping in customized reinforced double-wall wooden cases. Warm responsive support via email within 24h." : lang === 'es' ? "Entrega nacional asegurada en embalajes reforzados. Soporte rápido vía correo electrónico." : lang === 'ar' ? "توصيل وتسليم آمن ومضمون في طروض خشبية معززة خصيصاً لمقعدك. خدمة عملاء دافئة وسريعة." : "Livraison nationale sécurisée dans des emballages renforcés sur-mesure. Service client réactif et chaleureux par mail sous 24h.")}
+            </p>
+            <div className="text-[#2d4a22] dark:text-[#84a98c] font-bold">
+              E-mail : contact@nexus-atelier.fr
             </div>
           </div>
 
-          {/* Bottom Half */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-slate-600 font-medium font-mono">
-            <p>© {new Date().getFullYear()} basecase.co. Tous droits réservés. Conçu pour Google AI Studio Build.</p>
-            <div className="flex gap-4">
-              <span className="hover:text-slate-400 transition-colors">Qualité Institutionnelle</span>
-              <span>•</span>
-              <span className="hover:text-slate-400 transition-colors">Espace Projet Chiffré & Sécurisé</span>
+          <div className="space-y-3 text-left">
+            <h4 className="text-[10px] font-mono uppercase font-bold tracking-wider text-slate-800 dark:text-slate-350">
+              {lang === 'en' ? "Manufacturing Warranties" : lang === 'es' ? "Garantía de Fábrica" : lang === 'ar' ? "ضمانات التصنيع الممتازة" : "Garanties de Fabrication"}
+            </h4>
+            <p className="leading-relaxed font-medium">
+              {siteConfig?.footerWarranty || (lang === 'en' ? "Every piece bought online includes a 5-year constructor warranty coverage on foam resilience along with direct workspace support." : lang === 'es' ? "Toda compra incluye cobertura de 5 años contra affaissement estructural." : lang === 'ar' ? "تستفيد جميع المنتجات المشترات إلكترونياً من تأمين وحماية ضد الأعطال الهيكلية لمدة 5 سنوات." : "Toutes les pièces commandées en ligne bénéficient d'une assurance contre les déformations de mousse de 5 ans et d'une assistance directe par chat d'atelier.")}
+            </p>
+            <div className="text-slate-400 dark:text-slate-500 font-medium">
+              &copy; {new Date().getFullYear()} nexus. All Rights Reserved.
             </div>
           </div>
 
         </div>
       </footer>
 
+      {/* SHOPPING CART SIDEPANEL DRAWER */}
+      <AnimatePresence>
+        {cartOpen && (
+          <div className="fixed inset-0 z-50 overflow-hidden text-left font-sans">
+            {/* Overlay backdrop */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.55 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setCartOpen(false)}
+              className="absolute inset-0 bg-black/60 cursor-pointer text-left"
+            />
+
+            {/* Drawer side panel */}
+            <div className={`absolute inset-y-0 ${isRTL ? 'left-0' : 'right-0'} max-w-full flex ${isRTL ? 'pr-10' : 'pl-10'} text-left`}>
+              <motion.div 
+                initial={{ x: isRTL ? "-100%" : "100%" }}
+                animate={{ x: 0 }}
+                exit={{ x: isRTL ? "-100%" : "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                className="w-screen max-w-md bg-white dark:bg-slate-900 shadow-2xl flex flex-col justify-between"
+              >
+                {/* Header */}
+                <div className="p-6 border-b border-[#e6eee3] dark:border-slate-800 flex items-center justify-between bg-[#f4f8f3] dark:bg-slate-950">
+                  <div className="flex items-center gap-2">
+                    <ShoppingBag className="w-5 h-5 text-[#2d4a22]" />
+                    <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider">{t.cartTitle}</h3>
+                    <span className="text-[10px] bg-[#2d4a22]/10 dark:bg-[#2d4a22]/35 text-[#2d4a22] dark:text-[#84a98c] font-bold px-2 py-0.5 rounded font-mono">
+                      {cart.reduce((sum, item) => sum + item.quantity, 0)} {t.itemsLabel}
+                    </span>
+                  </div>
+                  <button 
+                    onClick={() => setCartOpen(false)}
+                    className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg cursor-pointer text-slate-500 transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Main Body - Conditional view */}
+                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                  
+                  {checkoutStep === "confirm" ? (
+                    /* Order placed Screen Success */
+                    <motion.div 
+                      initial={{ scale: 0.95, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      className="text-center py-8 space-y-5"
+                    >
+                      <div className="w-16 h-16 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner border border-emerald-100 dark:border-emerald-900/60">
+                        <Check className="w-8 h-8 stroke-[2.5]" />
+                      </div>
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-black text-[#2d4a22] dark:text-emerald-450 uppercase tracking-wider">{t.orderCompleted}</h4>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{t.orderConfirmedMsg}</p>
+                      </div>
+
+                      <div className="bg-[#f4f8f3] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 p-4 rounded-xl text-left space-y-2.5">
+                        <div className="flex justify-between items-center border-b border-[#e2eae0] dark:border-slate-800 pb-2 text-[11px] font-mono">
+                          <span className="text-slate-450 dark:text-slate-500 font-bold">{t.trackingNumber} :</span>
+                          <span className="text-[#2d4a22] dark:text-emerald-400 font-black underline">{orderTracking}</span>
+                        </div>
+                        <div className="space-y-1 text-xs text-slate-650 dark:text-slate-350 font-medium font-sans">
+                          <p>&bull; {lang === 'en' ? "Recipient:" : lang === 'es' ? "Destinatario:" : lang === 'ar' ? "المستلم :" : "Destinataire :"} <strong className="text-slate-900 dark:text-white">{shippingAddress.fullName}</strong></p>
+                          <p>&bull; {lang === 'en' ? "Shipping Details:" : lang === 'es' ? "Envío:" : lang === 'ar' ? "عنوان التوصيل :" : "Adresse de livraison :"} <strong className="text-slate-800 dark:text-slate-200">{shippingAddress.address}, {shippingAddress.city}</strong></p>
+                          <p>&bull; {lang === 'en' ? "Logistic Option:" : lang === 'es' ? "Logística:" : lang === 'ar' ? "خيار التوصيل :" : "Option Logistique :"} <strong className="text-slate-800 dark:text-slate-200">{lang === 'en' ? "Specialized Furniture Carrier" : lang === 'es' ? "Soporte de mobiliario especial" : lang === 'ar' ? "نقل وتوصيل أثاث فاخر مخصص" : "Transporteur Spécialisé Mobilier"}</strong></p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={handleFinishCheckout}
+                        className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-widest py-3.5 rounded-xl cursor-pointer shadow-sm transition-colors"
+                      >
+                        {t.continueShoppingBtn}
+                      </button>
+                    </motion.div>
+                  ) : checkoutStep === "form" ? (
+                    /* Shipping Form Screen */
+                    <form onSubmit={handleSubmitCheckout} className="space-y-4 text-left">
+                      <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 pb-2">
+                        <button 
+                          type="button" 
+                          onClick={() => setCheckoutStep("idle")} 
+                          className="text-xs font-bold text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:underline cursor-pointer"
+                        >
+                          &larr; {lang === 'en' ? "Back to Cart" : lang === 'es' ? "Volver" : lang === 'ar' ? "العودة للسلة" : "Retour au panier"}
+                        </button>
+                        <span className="text-xs text-slate-350">/</span>
+                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{t.shippingAddress}</span>
+                      </div>
+
+                      <h3 className="text-sm font-bold text-slate-800 dark:text-white font-sans uppercase">{t.checkoutFormTitle}</h3>
+
+                      <div className="space-y-3.5">
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{t.fullName} *</label>
+                          <input
+                            type="text"
+                            required
+                            placeholder={lang === 'en' ? "e.g. John Doe" : "ex : Alexandre Martin"}
+                            value={shippingAddress.fullName}
+                            onChange={(e) => setShippingAddress({ ...shippingAddress, fullName: e.target.value })}
+                            className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-lg px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-150 outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{t.shippingAddress} *</label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="12 rue de la Paix"
+                            value={shippingAddress.address}
+                            onChange={(e) => setShippingAddress({ ...shippingAddress, address: e.target.value })}
+                            className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-lg px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-150 outline-none"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3.5">
+                          <div className="space-y-1.5">
+                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{t.zipCode} *</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="75001"
+                              value={shippingAddress.zip}
+                              onChange={(e) => setShippingAddress({ ...shippingAddress, zip: e.target.value })}
+                              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-lg px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-150 outline-none"
+                            />
+                          </div>
+                          
+                          <div className="space-y-1.5">
+                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{t.city} *</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="Paris"
+                              value={shippingAddress.city}
+                              onChange={(e) => setShippingAddress({ ...shippingAddress, city: e.target.value })}
+                              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-lg px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-150 outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                            {lang === 'en' ? "Secure Payment (Simulated demo)" : lang === 'es' ? "Detalles del pago seguro (simulación)" : lang === 'ar' ? "بيانات الدفع الإلكتروني الآمن (نموذج محاكاة)" : "Données Bancaires (Simulé de démos)"}
+                          </label>
+                          <div className="grid grid-cols-3 gap-2 bg-slate-50 dark:bg-slate-950 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                            <input
+                              type="text"
+                              disabled
+                              value={shippingAddress.cardNumber}
+                              className="col-span-2 bg-transparent text-xs text-slate-450 dark:text-slate-400 outline-none pl-1"
+                            />
+                            <div className="text-right text-xs font-mono font-semibold text-slate-400 pr-1 select-none">
+                              CVV {shippingAddress.cvv}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="w-full mt-6 bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-widest py-3.5 rounded-lg cursor-pointer shadow-sm transition-colors"
+                      >
+                        {t.paySubmit} ({formatPrice(grandTotal, currency)})
+                      </button>
+                    </form>
+                  ) : cart.length === 0 ? (
+                    /* Empty Cart */
+                    <div className="text-center py-16 space-y-4">
+                      <ShoppingBag className="w-10 h-10 text-slate-300 dark:text-slate-700 mx-auto" />
+                      <p className="text-xs font-bold text-slate-600 dark:text-slate-300">{t.emptyCart}</p>
+                      <button 
+                        onClick={() => setCartOpen(false)}
+                        className="text-xs text-[#2d4a22] dark:text-emerald-400 font-semibold underline hover:text-[#1a2d15]"
+                      >
+                        {t.continueShoppingBtn} &rarr;
+                      </button>
+                    </div>
+                  ) : (
+                    /* Display list of added products */
+                    <div className="space-y-4">
+                      {cart.map((item, idx) => (
+                        <div 
+                          key={idx} 
+                          className="flex items-center justify-between p-3 rounded-xl bg-[#fbfdfa] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 gap-3 text-left"
+                        >
+                          <img 
+                            src={item.product.image} 
+                            alt={item.product.name}
+                            referrerPolicy="no-referrer"
+                            className="w-12 h-12 rounded-lg object-cover flex-shrink-0" 
+                          />
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">{item.product.name}</h4>
+                            <p className="text-[10px] text-slate-450 dark:text-slate-500 font-mono mt-0.5">
+                              {item.selectedColor.name} {item.selectedVariant ? `• ${item.selectedVariant}` : ""}
+                            </p>
+                            <p className="text-[10px] text-[#2d4a22] dark:text-emerald-450 font-bold font-mono">
+                              {formatPrice(item.product.price, currency)}
+                            </p>
+                          </div>
+
+                          {/* Stepper qty controls */}
+                          <div className="flex flex-col items-center gap-1.5">
+                            <div className="flex items-center border border-slate-250 dark:border-slate-800 rounded-lg overflow-hidden bg-white dark:bg-slate-900 text-xs scale-90">
+                              <button 
+                                onClick={() => updateCartQuantity(idx, -1)}
+                                className="px-2 py-0.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold cursor-pointer"
+                              >
+                                -
+                              </button>
+                              <span className="font-mono font-bold px-2 text-slate-800 dark:text-slate-100">{item.quantity}</span>
+                              <button 
+                                onClick={() => updateCartQuantity(idx, 1)}
+                                className="px-2 py-0.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold cursor-pointer"
+                              >
+                                +
+                              </button>
+                            </div>
+
+                            <button
+                              onClick={() => removeCartItem(idx)}
+                              className="text-slate-455 hover:text-rose-500 text-[9px] font-mono flex items-center gap-0.5 cursor-pointer"
+                            >
+                              <Trash2 className="w-2.5 h-2.5" /> {lang === 'en' ? "Remove" : "Retirer"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+
+                      {/* Promo Code section */}
+                      <form onSubmit={handleApplyPromo} className="pt-4 border-t border-[#e6eee3] dark:border-slate-800 space-y-2 text-left">
+                        <label className="block text-[9px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{lang === 'en' ? "Promo Coupon Code" : "Ajouter un code de réduction"}</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder="ex : WELCOME10"
+                            value={promoCodeInput}
+                            onChange={(e) => setPromoCodeInput(e.target.value)}
+                            className="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-205 dark:border-slate-800 focus:border-[#2d4a22] rounded-lg px-3 py-2 text-xs text-slate-800 dark:text-slate-100 outline-none"
+                          />
+                          <button
+                            type="submit"
+                            className="bg-[#2d4a22] hover:bg-[#1a2d15] text-white text-[10px] uppercase font-bold tracking-wider px-4 rounded-lg cursor-pointer"
+                          >
+                            {lang === 'en' ? "Apply" : "Appliquer"}
+                          </button>
+                        </div>
+                        {appliedCodeName && (
+                          <p className="text-[10px] text-emerald-600 font-bold">{t.promoApplied} : {appliedCodeName}</p>
+                        )}
+                        {promoError && (
+                          <p className="text-[10px] text-rose-600 font-bold">{promoError}</p>
+                        )}
+                      </form>
+                    </div>
+                  )}
+
+                </div>
+
+                {/* Footer Drawer - Billing calculation if not confirmation */}
+                {checkoutStep !== "confirm" && cart.length > 0 && (
+                  <div className="p-6 border-t border-[#e6eee3] dark:border-slate-800 bg-[#fbfdfa] dark:bg-slate-950 space-y-4">
+                    <div className="space-y-1.5 text-xs text-slate-650 dark:text-slate-300 font-medium font-sans">
+                      <div className="flex justify-between">
+                        <span>{t.cartSubtotal} :</span>
+                        <span className="font-mono text-slate-800 dark:text-slate-105 font-bold">{formatPrice(subtotal, currency)}</span>
+                      </div>
+                      {discountAmount > 0 && (
+                        <div className="flex justify-between text-emerald-650">
+                          <span>{t.promoApplied} ({activeDiscount}%) :</span>
+                          <span className="font-mono font-bold">- {formatPrice(discountAmount, currency)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span>{t.shipping} :</span>
+                        <span className="font-mono text-slate-800 dark:text-slate-105 font-bold">
+                          {shippingCharge === 0 ? (lang === "en" ? "Free" : lang === "es" ? "Gratis" : lang === "ar" ? "شحن مجاني" : "Gratuit") : formatPrice(shippingCharge, currency)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-slate-400 dark:text-slate-500 text-[10px] italic">
+                        <span>{lang === 'en' ? "Premium wood casing is free after 250." : "Emballage premium en bois offert dès 250 d'achat."}</span>
+                      </div>
+                      <div className="h-px bg-[#e6eee3] dark:bg-slate-800 my-2"></div>
+                      <div className="flex justify-between text-[#2d4a22] dark:text-emerald-450 text-sm font-black uppercase">
+                        <span>{t.cartTotal} :</span>
+                        <span className="font-mono font-bold">{formatPrice(grandTotal, currency)}</span>
+                      </div>
+                    </div>
+
+                    {checkoutStep === "idle" && (
+                      <button
+                        onClick={handleLaunchCheckout}
+                        className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-widest py-3.5 rounded-xl cursor-pointer shadow-sm transition-all text-center flex items-center justify-center gap-2 select-none"
+                      >
+                        {t.checkoutBtn}
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                )}
+
+              </motion.div>
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* User Centered Modal Windows (Minimalist pop-up containing user information & purchases list) */}
+      <AnimatePresence>
+        {userDropdownOpen && user && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
+            {/* Backdrop blur overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setUserDropdownOpen(false)}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-xs cursor-pointer"
+            />
+
+            {/* Modal Box */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative bg-white dark:bg-slate-900 border border-[#e6eee3] dark:border-slate-800 rounded-[2rem] shadow-2xl p-6 md:p-8 max-w-lg w-full z-10 text-left space-y-6 max-h-[90vh] overflow-y-auto select-text"
+            >
+              {/* Profile Card Header section */}
+              <div className="flex items-center gap-4 border-b border-slate-100 dark:border-slate-800 pb-5">
+                {user.photoURL ? (
+                  <img 
+                    src={user.photoURL} 
+                    alt="User Avatar" 
+                    referrerPolicy="no-referrer"
+                    className="w-16 h-16 rounded-full border-2 border-[#2d4a22] dark:border-[#84a98c] shadow-sm flex-shrink-0"
+                  />
+                ) : (
+                  <div className="w-16 h-16 bg-[#2d4a22]/10 dark:bg-[#2d4a22]/20 text-[#2d4a22] dark:text-[#84a98c] rounded-full flex items-center justify-center border-2 border-[#2d4a22] shadow-inner text-xl font-bold uppercase flex-shrink-0">
+                    {user.displayName ? user.displayName.slice(0, 2) : "NX"}
+                  </div>
+                )}
+                
+                <div className="min-w-0 flex-1">
+                  <span className="text-[9px] font-mono tracking-widest text-[#2d4a22] dark:text-emerald-450 uppercase font-extrabold bg-[#2d4a22]/10 dark:bg-[#2d4a22]/30 px-2 py-0.5 rounded-full">
+                    {user.email === "grasdvirus@gmail.com" ? t.userRoleAdmin : t.userRoleClient}
+                  </span>
+                  <h4 className="text-sm font-black text-slate-900 dark:text-white truncate mt-1">
+                    {user.displayName || "Client nexus."}
+                  </h4>
+                  <p className="text-[11px] text-slate-450 dark:text-slate-400 font-mono truncate">{user.email}</p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setUserDropdownOpen(false)}
+                  className="p-1 px-2.5 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-750 text-slate-500 dark:text-slate-350 text-sm font-bold rounded-lg cursor-pointer transition-all self-start"
+                >
+                  &times;
+                </button>
+              </div>
+
+              {/* Past Receipts and Purchases list */}
+              <div className="space-y-3">
+                <h5 className="text-[10px] font-mono uppercase tracking-wider text-slate-400 dark:text-slate-500 font-extrabold flex items-center gap-1.5">
+                  <History className="w-4 h-4 text-[#2d4a22]" /> 
+                  {t.myPurchases} ({myOrders.length})
+                </h5>
+                
+                <div className="max-h-52 overflow-y-auto space-y-2.5 pr-1.5 text-left">
+                  {myOrders.map((ord: any) => (
+                    <div key={ord.id} className="bg-slate-50/50 dark:bg-slate-950/40 p-3.5 rounded-2xl border border-[#e6eee3] dark:border-slate-850 text-xs">
+                      <div className="flex justify-between font-mono font-semibold">
+                        <span className="text-slate-800 dark:text-slate-200">{t.orderCode} : {ord.id}</span>
+                        <span className="text-[#2d4a22] dark:text-emerald-450 font-black">{formatPrice(ord.total, currency)}</span>
+                      </div>
+                      <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400 mt-1 pb-1 border-b border-dashed border-slate-200 dark:border-slate-800">
+                        <span>{t.deliveredTo} {ord.city}</span>
+                        <span>{ord.items?.length || 1} {t.itemsLabel}</span>
+                      </div>
+                      {/* Nested ordered items listing */}
+                      <div className="mt-2 space-y-1">
+                        {ord.items?.map((it: any, k: number) => (
+                          <div key={k} className="flex justify-between text-[10px] text-slate-400 dark:text-slate-500 italic font-medium font-sans">
+                            <span>&bull; {it.quantity}x {it.name} ({it.selectedColor?.name || ""})</span>
+                            <span className="font-mono">{formatPrice(it.price, currency)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  {myOrders.length === 0 && (
+                    <div className="text-center py-6 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50/30 dark:bg-slate-950/10">
+                      <p className="text-[11px] text-slate-450 dark:text-slate-550 italic font-sans">{t.noOrdersYet}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Secure restoration option for grasdvirus@gmail.com */}
+              {user.email === "grasdvirus@gmail.com" && (
+                <div className="bg-indigo-50/40 dark:bg-indigo-950/20 p-3 rounded-2xl border border-indigo-100/30 dark:border-indigo-900/30 space-y-2">
+                  <p className="text-[9px] font-mono tracking-wider font-extrabold text-indigo-705 dark:text-indigo-400 uppercase">Option exclusive d'administration</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSeedDatabase();
+                      setUserDropdownOpen(false);
+                    }}
+                    className="w-full bg-[#1e1b4b] hover:bg-indigo-900 text-white font-mono uppercase font-bold py-2.5 rounded-xl text-xs transition-all text-center flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                    {t.restoreCatalogBtn}
+                  </button>
+                </div>
+              )}
+
+              {/* Large logout action */}
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="w-full bg-slate-50 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/30 text-slate-600 hover:text-rose-650 dark:text-slate-300 dark:hover:text-rose-450 border border-slate-200 dark:border-slate-750 hover:border-rose-100 dark:hover:border-rose-900 py-3.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+                {t.signOut}
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* SETTINGS DIALOG MODAL */}
+      <AnimatePresence>
+        {settingsOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
+            {/* Backdrop overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSettingsOpen(false)}
+              className="absolute inset-0 bg-slate-950/50 backdrop-blur-xs cursor-pointer"
+            />
+
+            {/* Modal Content */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative bg-white dark:bg-slate-900 border border-[#e6eee3] dark:border-slate-850 rounded-3xl shadow-2xl p-6 md:p-8 max-w-sm w-full z-10 text-left space-y-6"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3.5">
+                <h3 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                  <Sliders className="w-4 h-4 text-[#2d4a22] dark:text-emerald-450" />
+                  {t.settingsTitle}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen(false)}
+                  className="font-sans text-xl font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {/* Language selection tab */}
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    {t.langLabel}
+                  </label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {(["fr", "en", "es", "ar"] as Language[]).map((la) => (
+                      <button
+                        key={la}
+                        type="button"
+                        onClick={() => setLang(la)}
+                        className={`py-2 px-1 text-center font-extrabold text-xs rounded-xl border transition-all cursor-pointer ${
+                          lang === la
+                            ? "bg-[#2d4a22] text-white border-[#2d4a22]"
+                            : "bg-stone-50/50 dark:bg-slate-950 border-[#e2eae0] dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        }`}
+                      >
+                        {la === "fr" ? "FR" : la === "en" ? "EN" : la === "es" ? "ES" : "AR"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Theme switching buttons */}
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    {t.themeLabel}
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTheme("white")}
+                      className={`py-2 px-3 text-center font-bold text-xs rounded-xl border transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                        theme === "white"
+                          ? "bg-[#2d4a22] text-white border-[#2d4a22]"
+                          : "bg-stone-50/50 dark:bg-slate-950 border-[#e2eae0] dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                      }`}
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full bg-white border border-slate-300 block"></span>
+                      {t.lightTheme}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTheme("black")}
+                      className={`py-2 px-3 text-center font-bold text-xs rounded-xl border transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                        theme === "black"
+                          ? "bg-[#2d4a22] text-white border-[#2d4a22]"
+                          : "bg-stone-50/50 dark:bg-slate-950 border-[#e2eae0] dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                      }`}
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full bg-slate-900 border border-slate-750 block"></span>
+                      {t.darkTheme}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Currency select tabs */}
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    {t.currencyLabel}
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["EUR", "USD", "CFA"] as Currency[]).map((cur) => (
+                      <button
+                        key={cur}
+                        type="button"
+                        onClick={() => setCurrency(cur)}
+                        className={`py-2 px-1 text-center font-extrabold text-xs rounded-xl border transition-all cursor-pointer ${
+                          currency === cur
+                            ? "bg-[#2d4a22] text-white border-[#2d4a22]"
+                            : "bg-stone-50/50 dark:bg-slate-950 border-[#e2eae0] dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                        }`}
+                      >
+                        {cur === "EUR" ? "EUR (€)" : cur === "USD" ? "USD ($)" : "CFA (FCFA)"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(false)}
+                className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white text-xs uppercase font-extrabold tracking-widest py-3.5 rounded-xl cursor-pointer shadow-sm transition-all text-center block"
+              >
+                {t.closeBtn}
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }
-

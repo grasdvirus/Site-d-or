@@ -1,6 +1,6 @@
 {
-  "name": "Basecase - Modélisation Financière",
-  "description": "Une page de destination haut de gamme pour une agence de modélisation financière de premier plan, avec une typographie moderne, des animations fluides et un simulateur interactif pas-à-pas.",
+  "name": "nexus. — Boutique de Mobilier d'Élite",
+  "description": "Boutique en ligne de mobilier design d'exception par nexus. Propose des fauteuils haut de gamme sculpturaux, un simulateur de personnalisation de tissu/coloris, un panier d'achat persistant, et un portail administrateur de gestion des stocks.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

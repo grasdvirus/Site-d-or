@@ -7,36 +7,55 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-/* Sleek Interface minimalist radial glows for modern tech look */
+/* Organic Sage & Forest Green ambient glows from the reference image */
 .glow-purple {
-  background: radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.08) 0%, rgba(255, 255, 255, 0) 70%);
+  background: radial-gradient(circle at 50% 50%, rgba(56, 94, 58, 0.15) 0%, rgba(255, 255, 255, 0) 70%);
   filter: blur(60px);
 }
 
 .glow-blue {
-  background: radial-gradient(circle at 50% 50%, rgba(59, 130, 246, 0.06) 0%, rgba(255, 255, 255, 0) 75%);
+  background: radial-gradient(circle at 50% 50%, rgba(45, 74, 34, 0.12) 0%, rgba(255, 255, 255, 0) 75%);
   filter: blur(80px);
 }
 
 .glow-lavender {
-  background: radial-gradient(circle at 40% 30%, rgba(139, 92, 246, 0.07) 0%, rgba(255, 255, 255, 0) 80%);
+  background: radial-gradient(circle at 40% 30%, rgba(132, 169, 140, 0.15) 0%, rgba(255, 255, 255, 0) 80%);
+}
+
+.green-studio-gradient {
+  background: linear-gradient(135deg, #2d4a22 0%, #172811 100%);
+}
+
+.green-soft-ambient {
+  background: radial-gradient(circle at bottom right, #eef5eb 0%, #ffffff 80%);
+}
+
+.green-subtle-glow {
+  background: radial-gradient(circle at center, rgba(132, 169, 140, 0.25) 0%, rgba(255, 255, 255, 0) 75%);
+}
+
+.custom-card-zoom img {
+  transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.custom-card-zoom:hover img {
+  transform: scale(1.06);
 }
 
 /* Custom Sleek shadows to match the high-end Nexus UI */
 .sleek-shadow-sm {
-  box-shadow: 0 2px 8px -1px rgba(15, 23, 42, 0.03), 0 1px 3px -1px rgba(15, 23, 42, 0.02);
+  box-shadow: 0 4px 12px -2px rgba(28, 48, 26, 0.03), 0 2px 4px -2px rgba(28, 48, 26, 0.02);
 }
 
 .sleek-shadow-md {
-  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.04), 0 8px 16px -6px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 12px 30px -6px rgba(28, 48, 26, 0.05), 0 8px 20px -8px rgba(28, 48, 26, 0.04);
 }
 
 .sleek-shadow-lg {
-  box-shadow: 0 20px 35px -8px rgba(99, 102, 241, 0.05), 0 12px 24px -10px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 24px 48px -10px rgba(45, 74, 34, 0.08), 0 12px 32px -12px rgba(28, 48, 26, 0.05);
 }
 
 .sleek-border {
-  border-color: rgba(241, 245, 249, 0.82);
+  border-color: rgba(230, 238, 227, 0.9);
 }
 
 /* Scroll styling */
@@ -45,12 +64,12 @@
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #f8fafc;
+  background: #f4f8f3;
 }
 ::-webkit-scrollbar-thumb {
-  background: #e2e8f0;
+  background: #cbd3c9;
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #cbd5e1;
+  background: #a9b5a6;
 }

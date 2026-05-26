@@ -1,260 +1,328 @@
 import React, { useState, useMemo } from "react";
-import { Check, Info, Sparkles, Zap, ArrowRight, HelpCircle } from "lucide-react";
+import { Check, ShoppingBag, Heart, Search, Star, Archive } from "lucide-react";
+import { Product } from "../types";
+import { TRANSLATIONS, Language, Currency, formatPrice } from "../translations";
 
-type Currency = "USD" | "EUR" | "GBP";
+interface PricingProps {
+  products: Product[];
+  onAddToCart: (product: Product, color: { name: string; hex: string }, variant?: string) => void;
+  lang?: Language;
+  currency?: Currency;
+  layoutMode?: "grid" | "collection";
+}
 
-export default function Pricing() {
-  const [billingPeriod, setBillingPeriod] = useState<"monthly" | "quarterly">("quarterly");
-  const [currency, setCurrency] = useState<Currency>("USD");
+export default function Pricing({ products, onAddToCart, lang = "fr", currency = "EUR", layoutMode = "grid" }: PricingProps) {
+  const t = TRANSLATIONS[lang] || TRANSLATIONS.fr;
 
-  // Exchange rates relative to USD (simulated)
-  const exchangeRates = {
-    USD: { symbol: "$", rate: 1 },
-    EUR: { symbol: "€", rate: 0.92 },
-    GBP: { symbol: "£", rate: 0.79 },
+  // Filters & State
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("Tous");
+  
+  // Favorites tracking
+  const [favorites, setFavorites] = useState<Record<string, boolean>>({});
+  
+  // Adding animation feedback state
+  const [addedProductIds, setAddedProductIds] = useState<Record<string, boolean>>({});
+  const [selectedColors, setSelectedColors] = useState<Record<string, { name: string; hex: string }>>({});
+  const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
+
+  // Categories list matching reference image (internal keys represent pristine filter tokens)
+  const categories = ["Tous", "Lounge", "Office", "Dining", "Rocking"];
+
+  // Helper translation mapping for categories
+  const getCategoryLabel = (cat: string) => {
+    switch(cat) {
+      case "Tous": return t.catAll || "Tous";
+      case "Lounge": return t.catLounge || "Lounge";
+      case "Office": return t.catOffice || "Office";
+      case "Dining": return t.catDining || "Dining";
+      case "Rocking": return t.catRocking || "Rocking";
+      default: return cat;
+    }
   };
 
-  // Base values in USD for plans
-  const planData = [
-    {
-      id: "simple",
-      name: "Simple Mod",
-      tagline: "Une demande à la fois. Idéal pour une croissance régulière.",
-      baseMonthlyUSD: 1450,
-      baseQuarterlyUSD: 1250, // per month
-      features: [
-        "Une seule demande active de modèle financier à la fois",
-        "Révisions & mises à jour sur mesure illimitées",
-        "Livraison brute au format source Excel ou Google Sheets",
-        "Mises à jour asynchrones hebdomadaires via Slack",
-        "Délai de traitement moyen de 48h par scénario",
-        "Pause ou annulation possible à tout moment",
-      ],
-      cta: "S'abonner à Simple Mod",
-      badge: "Idéal pour la phase d'Amorçage",
-      popular: false,
-    },
-    {
-      id: "growth",
-      name: "Growth Accelerator",
-      tagline: "Deux demandes simultanées. Conçu pour suivre votre accélération active.",
-      baseMonthlyUSD: 2950,
-      baseQuarterlyUSD: 2500, // per month
-      features: [
-        "Deux demandes financières actives en simultané",
-        "Simulations approfondies de table de capitalisation & dilution",
-        "Planification complète des recrutements et des effectifs",
-        "Canal Slack prioritaire & Espace de projet dédié",
-        "Délai moyen de retour de 24h sur vos demandes",
-        "Soutien complet pour vos présentations de conseil (Board)",
-        "Pause ou annulation possible à tout moment",
-      ],
-      cta: "S'abonner au plan Growth",
-      badge: "Le Plus Populaire",
-      popular: true,
-    },
-    {
-      id: "special",
-      name: "Projet Spécial",
-      tagline: "Forfait fixe sur mesure pour vos transactions lourdes d'entreprise.",
-      baseMonthlyUSD: 2600, // Fixed cost
-      baseQuarterlyUSD: 2200, // per project (simulated discount)
-      features: [
-        "Création de modèle financier sur mesure à partir de zéro",
-        "Formulation de scénarios haut de gamme pour pitch de levée",
-        "Modélisation intensive de cession, acquisition (M&A) ou d'exit",
-        "Plusieurs appels vidéo hebdomadaires réguliers de synchronisation",
-        "Soutien complet durant les phases d'audit et de due diligence",
-        "Premier jet garanti sous 5 jours ouvrés",
-      ],
-      cta: "Réserver un conseil personnalisé",
-      badge: "Forfait Fixe Unique",
-      popular: false,
-    },
-  ];
+  // Filter products by category and query
+  const filteredProducts = useMemo(() => {
+    return products.filter((product) => {
+      const matchesCategory = selectedCategory === "Tous" || product.category === selectedCategory;
+      const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                            product.tagline.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            product.description.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchesCategory && matchesSearch;
+    });
+  }, [products, selectedCategory, searchQuery]);
 
-  const formatPrice = (baseUSD: number) => {
-    const symbol = exchangeRates[currency].symbol;
-    const rate = exchangeRates[currency].rate;
-    const converted = Math.round(baseUSD * rate);
-    return `${symbol}${converted.toLocaleString()}`;
+  // Handle adding
+  const handleAddToCart = (product: Product) => {
+    const activeColor = selectedColors[product.id] || product.colors[0];
+    const activeVariant = selectedVariants[product.id] || (product.variants && product.variants[0]);
+
+    onAddToCart(product, activeColor, activeVariant);
+
+    setAddedProductIds(prev => ({ ...prev, [product.id]: true }));
+    setTimeout(() => {
+      setAddedProductIds(prev => ({ ...prev, [product.id]: false }));
+    }, 1500);
   };
+
+  const toggleFavorite = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setFavorites(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  // Simulating random discounts for retail visual flair
+  const getProductDiscount = (id: string) => {
+    if (id === "orris-chair") return "-5%";
+    if (id === "elvo-chair") return "-10%";
+    if (id === "mollis-accent") return "-15%";
+    return null;
+  };
+
+  const isRTL = lang === "ar";
+  const emptyFilterMsg = lang === "en" ? "No products match your search filters" : lang === "es" ? "Ningún modelo coincide con los filtros" : lang === "ar" ? "لم نجد أي تصاميم تطابق خيارات البحث الحالية" : "Aucun produit ne correspond à vos filtres";
+  const emptyFilterSub = lang === "en" ? "Try typing different letters or choose another filter above like Lounge." : lang === "es" ? "Intente escribir otros términos o seleccione otra categoría." : lang === "ar" ? "يرجى كتابة كلمة مفتاحية أخرى أو تغيير الفئات في الأعلى." : "Essayez de taper un autre terme ou de sélectionner une autre catégorie comme 'Lounge'.";
 
   return (
-    <div id="pricing-plans" className="space-y-12">
-      {/* Toggles bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
-        {/* Billing Period Toggle */}
-        <div className="flex items-center gap-3 bg-slate-100 p-1 rounded-xl">
-          <button
-            onClick={() => setBillingPeriod("monthly")}
-            className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-              billingPeriod === "monthly"
-                ? "bg-white text-slate-900 shadow-xs"
-                : "text-slate-500 hover:text-slate-900"
-            }`}
-          >
-            Mensuel
-          </button>
-          <button
-            onClick={() => setBillingPeriod("quarterly")}
-            className={`relative px-4 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-              billingPeriod === "quarterly"
-                ? "bg-indigo-600 text-white shadow-xs"
-                : "text-slate-500 hover:text-indigo-600"
-            }`}
-          >
-            Trimestriel
-            <span className="text-[9px] bg-rose-500 text-white font-mono uppercase font-bold px-1.5 py-0.5 rounded-full">
-              -15%
-            </span>
-          </button>
+    <div id="pricing-plans" className="space-y-8 text-left">
+      
+      {/* Search & Categories Bar */}
+      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 bg-[#f4f8f3] dark:bg-slate-900/60 p-4.5 rounded-3xl border border-[#e6eee3] dark:border-slate-800 max-w-5xl mx-auto">
+        {/* Simple minimalist Search bar */}
+        <div className="relative flex-1 max-w-md">
+          <Search className={`absolute ${isRTL ? "right-3.5" : "left-3.5"} top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400`} />
+          <input
+            type="text"
+            placeholder={t.searchPlaceholder}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className={`w-full bg-white dark:bg-slate-900 border border-[#e2eae0] dark:border-slate-800 focus:border-[#2d4a22] rounded-xl ${isRTL ? "pr-10 pl-4" : "pl-10 pr-4"} py-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100 placeholder-slate-400 outline-none transition-all`}
+          />
+          {searchQuery && (
+            <button 
+              onClick={() => setSearchQuery("")}
+              className={`absolute ${isRTL ? "left-3" : "right-3"} top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 hover:text-slate-600 font-sans`}
+            >
+              &times;
+            </button>
+          )}
         </div>
 
-        {/* Currency Selector */}
-        <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
-          {(["USD", "EUR", "GBP"] as Currency[]).map((cur) => (
+        {/* Categories Pills list */}
+        <div className="flex flex-wrap gap-2 overflow-x-auto py-1">
+          {categories.map((cat) => (
             <button
-              key={cur}
-              onClick={() => setCurrency(cur)}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-                currency === cur
-                  ? "bg-white text-indigo-700 font-bold shadow-xs"
-                  : "text-slate-500 hover:text-slate-900"
+              key={cat}
+              type="button"
+              onClick={() => setSelectedCategory(cat)}
+              className={`px-4.5 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer whitespace-nowrap select-none ${
+                selectedCategory === cat
+                  ? "bg-[#2d4a22] text-white shadow-sm"
+                  : "bg-white dark:bg-slate-900 border border-[#e2eae0] dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-[#f4f8f3] dark:hover:bg-slate-800"
               }`}
             >
-              {cur}
+              {getCategoryLabel(cat)}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Grid of plan cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto items-stretch">
-        {planData.map((plan) => {
-          const isSpecial = plan.id === "special";
-          const activeBasePrice = billingPeriod === "monthly" ? plan.baseMonthlyUSD : plan.baseQuarterlyUSD;
+      {/* Main Catalog Grid */}
+      <div className={`grid ${layoutMode === "collection" ? "grid-cols-1 md:grid-cols-2 max-w-4xl" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 max-w-5xl"} gap-8 mx-auto items-stretch`}>
+        {filteredProducts.map((product) => {
+          const discount = getProductDiscount(product.id);
+          const defaultColor = product.colors[0] || { name: "Slate", hex: "#1e293b" };
+          const activeColor = selectedColors[product.id] || defaultColor;
+          const activeVariant = selectedVariants[product.id] || (product.variants && product.variants[0]);
+          const isAdded = addedProductIds[product.id];
+          const isFav = !!favorites[product.id];
+          const isLowStock = product.stock > 0 && product.stock <= 5;
 
           return (
             <div
-              key={plan.id}
-              className={`relative bg-white rounded-3xl border transition-all duration-300 flex flex-col justify-between overflow-hidden sleek-shadow-sm hover:sleek-shadow-lg ${
-                plan.popular
-                  ? "border-2 border-indigo-600 ring-4 ring-indigo-50/30 scale-102 z-10"
-                  : "border-slate-100/90"
-              }`}
+              key={product.id}
+              className="group/card relative bg-white dark:bg-slate-900 rounded-[1.8rem] border border-[#e2eae0]/80 dark:border-slate-800 overflow-hidden flex flex-col justify-between transition-all duration-300 sleek-shadow-sm hover:sleek-shadow-md hover:border-[#2d4a22]/30"
             >
-              {/* Highlight Badge */}
-              {plan.popular && (
-                <div className="absolute top-0 right-0 bg-indigo-600 text-white font-mono text-[9px] tracking-wider font-extrabold uppercase px-4 py-1.5 rounded-bl-2xl flex items-center gap-1">
-                  <StarIcon className="w-3 h-3 text-indigo-200 fill-current" />
-                  Le Plus Populaire
-                </div>
-              )}
-              {!plan.popular && plan.badge && (
-                <div className="absolute top-4 right-4 bg-slate-100 text-slate-600 font-mono text-[9px] tracking-wider uppercase font-bold px-3 py-1 rounded-full">
-                  {plan.badge}
-                </div>
-              )}
+              {/* Image box frame with overlay layout */}
+              <div className="relative h-64 w-full overflow-hidden bg-slate-50 dark:bg-slate-950">
+                {/* Discount Tag Top-Left */}
+                {discount && (
+                  <div className={`absolute top-4 ${isRTL ? "right-4" : "left-4"} bg-[#fcf5eb] dark:bg-slate-800 text-[#b45309] dark:text-amber-450 font-mono text-[10px] tracking-wider uppercase font-extrabold px-2.5 py-1 rounded-full z-15 shadow-sm`}>
+                    {discount}
+                  </div>
+                )}
 
-              {/* Card top */}
-              <div className="p-8 pb-4 space-y-4">
-                <span className="text-[10px] font-mono tracking-widest uppercase font-bold text-slate-400 block">
-                  {plan.badge}
-                </span>
-                <h3 className="text-2xl font-bold font-sans text-slate-900">{plan.name}</h3>
-                <p className="text-xs text-slate-500 leading-relaxed min-h-8">{plan.tagline}</p>
+                {/* Categories Badge backup */}
+                {!discount && (
+                  <div className={`absolute top-4 ${isRTL ? "right-4" : "left-4"} bg-slate-500/10 text-slate-705 dark:text-slate-300 border border-slate-200/40 dark:border-slate-800 text-[9px] font-mono uppercase font-bold px-2.5 py-1 rounded-full z-15`}>
+                    {getCategoryLabel(product.category)}
+                  </div>
+                )}
 
-                {/* Pricing Display */}
-                <div className="pt-2">
-                  <span className="text-4xl md:text-5xl font-mono font-bold text-slate-900 tracking-tight">
-                    {formatPrice(activeBasePrice)}
-                  </span>
-                  <span className="text-slate-400 font-sans text-xs font-semibold block mt-1">
-                    {isSpecial ? "tarif initial par projet" : "par mois, facturé " + (billingPeriod === "monthly" ? "mensuellement" : "trimestriellement")}
-                  </span>
-                </div>
-              </div>
-
-              {/* Card middle (Features) */}
-              <div className="px-8 py-4 bg-slate-50/40 border-y border-slate-100/90 flex-1">
-                <p className="text-xs font-mono font-semibold text-slate-400 uppercase tracking-wider mb-4">
-                  Ce qui est inclus :
-                </p>
-                <ul className="space-y-3.5">
-                  {plan.features.map((feature, idx) => (
-                    <li key={idx} className="flex gap-2.5 items-start text-xs text-slate-600">
-                      <Check className="w-4 h-4 text-indigo-600 flex-shrink-0 mt-0.5" />
-                      <span>{feature}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              {/* Card bottom (CTA) */}
-              <div className="p-8">
+                {/* Heart/Favorite toggle on Top-Right */}
                 <button
-                  onClick={() => alert(`Redirection vers le portail de facturation sécurisé pour ${plan.name} en cycle ${billingPeriod === "monthly" ? "mensuel" : "trimestriel"}. Cette démo fournit une simulation entièrement fonctionnelle !`)}
-                  className={`w-full py-3.5 rounded-xl font-bold text-xs tracking-wider uppercase cursor-pointer transition-all duration-200 flex items-center justify-center gap-2 ${
-                    plan.popular
-                      ? "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/10"
-                      : "bg-slate-900 hover:bg-slate-800 text-white"
+                  type="button"
+                  onClick={(e) => toggleFavorite(product.id, e)}
+                  className={`absolute top-4 ${isRTL ? "left-4" : "right-4"} p-2.5 rounded-full z-15 transition-all shadow-sm ${
+                    isFav 
+                      ? "bg-rose-50 dark:bg-rose-950 text-rose-500" 
+                      : "bg-white dark:bg-slate-900 text-slate-400 hover:text-slate-800 dark:hover:text-slate-150"
                   }`}
+                  title={isFav ? "Retirer" : "Ajouter"}
                 >
-                  {plan.cta}
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  <Heart className={`w-3.5 h-3.5 ${isFav ? "fill-rose-500" : ""}`} />
                 </button>
-                <p className="text-[10px] text-slate-400 text-center mt-3 font-mono">
-                  {isSpecial ? "Démarrage sous 24h" : "Mise en pause ou arrêt à tout moment"}
-                </p>
+
+                {/* Main Product graphic */}
+                <img
+                  src={product.image}
+                  alt={product.name}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover/card:scale-105"
+                  onError={(e) => {
+                    (e.target as HTMLElement).style.display = 'none';
+                  }}
+                />
+
+                {/* Stock Tag Overlay */}
+                {product.stock === 0 ? (
+                  <div className={`absolute bottom-3 ${isRTL ? "right-3" : "left-3"} bg-rose-500 text-white font-mono text-[9px] font-bold px-2 py-0.5 rounded uppercase`}>
+                    {t.outOfStock}
+                  </div>
+                ) : isLowStock ? (
+                  <div className={`absolute bottom-3 ${isRTL ? "right-3" : "left-3"} bg-amber-500 text-white font-mono text-[9px] font-bold px-2 py-0.5 rounded uppercase animate-pulse`}>
+                    {t.lowStock}
+                  </div>
+                ) : null}
               </div>
+
+              {/* Inside details */}
+              <div className="p-5.5 space-y-3.5 flex-1 flex flex-col justify-between">
+                <div>
+                  <h3 className="text-sm font-extrabold font-sans text-slate-900 dark:text-slate-100 tracking-tight flex items-center justify-between pr-2">
+                    <span>{product.name}</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-450 leading-normal mt-1 font-medium">{product.tagline}</p>
+                  
+                  {/* Stock count display */}
+                  <div className="flex items-center gap-1.5 mt-2.5">
+                    <span className={`inline-block w-1.5 h-1.5 rounded-full ${product.stock > 0 ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`}></span>
+                    <span className="text-[10px] font-mono font-extrabold text-slate-600 dark:text-slate-350">
+                      {lang === "en" ? `${product.stock} in stock` : lang === "es" ? `${product.stock} en stock` : lang === "ar" ? `${product.stock} في المخزن` : `${product.stock} en stock`}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Color Swatch selectors */}
+                {product.colors && product.colors.length > 1 && (
+                  <div className="flex gap-1.5 pt-1 items-center">
+                    <span className="text-[9px] font-mono text-slate-400 dark:text-slate-500 font-extrabold uppercase mr-1.5">
+                      {lang === "en" ? "Colors:" : lang === "es" ? "Colores:" : lang === "ar" ? "الألوان :" : "Coloris :"}
+                    </span>
+                    {product.colors.map((color, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedColors(prev => ({ ...prev, [product.id]: color }));
+                        }}
+                        className={`w-4.5 h-4.5 rounded-full border-2 flex items-center justify-center transition-all cursor-pointer ${
+                          activeColor.hex === color.hex
+                            ? "border-slate-800 dark:border-white scale-110"
+                            : "border-transparent hover:border-slate-305"
+                        }`}
+                        title={color.name}
+                      >
+                        <span
+                          className="w-2.5 h-2.5 rounded-full block border border-black/10"
+                          style={{ backgroundColor: color.hex }}
+                        ></span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Sizing / Variant selection */}
+                {product.variants && product.variants.length > 1 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] font-mono text-slate-400 dark:text-slate-500 font-extrabold uppercase">{product.variantsLabel || t.fabricColor} :</span>
+                    <select
+                      value={activeVariant || ""}
+                      onChange={(e) => setSelectedVariants(prev => ({ ...prev, [product.id]: e.target.value }))}
+                      className="bg-[#f4f8f3] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 text-[10px] font-bold text-slate-755 dark:text-slate-200 py-1 px-2 rounded-lg cursor-pointer outline-none"
+                    >
+                      {product.variants.map((v, idx) => (
+                        <option key={idx} value={v}>
+                          {v}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Card Footer pricing */}
+              <div className="px-5.5 py-4 bg-[#fbfdfa] dark:bg-slate-950 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
+                <div>
+                  <span className="text-[9px] uppercase font-mono tracking-wider font-extrabold text-slate-400 dark:text-slate-500 block">{t.tarifBoutique}</span>
+                  <span className="text-base font-mono font-bold text-slate-900 dark:text-white leading-none">
+                    {formatPrice(product.price, currency)}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={product.stock === 0}
+                  onClick={() => handleAddToCart(product)}
+                  className={`p-3 rounded-full transition-all duration-200 cursor-pointer flex items-center justify-center ${
+                    product.stock === 0
+                      ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed"
+                      : isAdded
+                      ? "bg-emerald-600 text-white animate-scaleUp"
+                      : "bg-[#2d4a22] text-white hover:bg-[#1a2d15] hover:scale-105 shadow-sm"
+                  }`}
+                  title={product.stock === 0 ? "Épuisé" : t.addToCart}
+                >
+                  {isAdded ? (
+                    <Check className="w-3.5 h-3.5 font-bold" />
+                  ) : (
+                    <ShoppingBag className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </div>
+
             </div>
           );
         })}
+
+        {filteredProducts.length === 0 && (
+          <div className="col-span-full text-center py-16 space-y-3 bg-[#fbfdfa] dark:bg-slate-900 rounded-[1.8rem] border border-[#e6eee3] dark:border-slate-800">
+            <Archive className="w-8 h-8 text-slate-400 mx-auto" />
+            <h4 className="text-xs font-bold text-slate-600 dark:text-slate-350">{emptyFilterMsg}</h4>
+            <p className="text-[10px] text-slate-400 max-w-xs mx-auto">{emptyFilterSub}</p>
+          </div>
+        )}
       </div>
 
-      {/* Bottom info banner */}
-      <div className="bg-slate-50/50 border border-slate-100/90 sleek-shadow-sm rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 max-w-5xl mx-auto">
-        <div className="flex items-center gap-3.5">
-          <div className="p-3 bg-indigo-50 rounded-xl text-indigo-600">
-            <Zap className="w-5 h-5" />
+      {/* Trust reassurance banner */}
+      <div className="bg-[#fbfdfa] dark:bg-slate-900/40 border border-[#e6eee3] dark:border-slate-800 rounded-2xl p-5 flex flex-col md:flex-row items-center justify-between gap-5 max-w-5xl mx-auto">
+        <div className="flex items-center gap-3.5 text-left">
+          <div className="p-3 bg-[#eef5eb] dark:bg-slate-950 text-[#2d4a22] flex-shrink-0 font-bold select-none text-xs rounded-xl">
+            ★ ★ ★ ★ ★
           </div>
           <div>
-            <h4 className="text-sm font-semibold text-slate-800">Besoin d'un volume sur mesure ou d'un support multi-projets ?</h4>
-            <p className="text-xs text-slate-500">Nous conseillons les startups de portfolios de capital-risque, les agrégateurs et les entreprises deep tech.</p>
+            <h4 className="text-xs font-extrabold text-slate-900 dark:text-slate-100">{t.warrantyTitle}</h4>
+            <p className="text-[11px] text-slate-500 dark:text-slate-450 font-medium">{t.warrantyDesc}</p>
           </div>
         </div>
         <a
-          href="#inquiry-form"
-          onClick={(e) => {
-            const el = document.getElementById("inquiry-form");
-            if (el) {
-              e.preventDefault();
-              el.scrollIntoView({ behavior: "smooth" });
-            }
-          }}
-          className="px-5 py-2.5 bg-white border border-slate-200 hover:bg-slate-900 hover:text-white rounded-xl text-xs font-medium text-slate-700 transition-colors"
+          href="#faqs-anchor"
+          className="px-4 py-2 bg-white dark:bg-slate-900 border border-[#e2eae0] dark:border-slate-800 hover:bg-[#2d4a22] hover:text-white rounded-xl text-[10px] font-extrabold text-slate-750 dark:text-slate-200 transition-all text-center uppercase tracking-wider"
         >
-          Demander une structure sur mesure &rarr;
+          {t.warrantyDeliveryBtn} &rarr;
         </a>
       </div>
-    </div>
-  );
-}
 
-function StarIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
-      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-    </svg>
+    </div>
   );
 }

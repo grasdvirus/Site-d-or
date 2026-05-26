@@ -1,0 +1,212 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Product item of the furniture shop catalog",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the product"
+        },
+        "name": {
+          "type": "string",
+          "description": "Friendly name of the product"
+        },
+        "tagline": {
+          "type": "string",
+          "description": "Catchphrase explaining the product's design vibe"
+        },
+        "description": {
+          "type": "string",
+          "description": "Comprehensive item description"
+        },
+        "price": {
+          "type": "number",
+          "description": "Retail unit price in Euros"
+        },
+        "image": {
+          "type": "string",
+          "description": "Cover Unsplash image address"
+        },
+        "category": {
+          "type": "string",
+          "description": "Furniture classification group"
+        },
+        "colors": {
+          "type": "array",
+          "description": "Array of color objects with friendly name and hex codes"
+        },
+        "variantsLabel": {
+          "type": "string",
+          "description": "E.g., Revetement or Option"
+        },
+        "variants": {
+          "type": "array",
+          "description": "List of available configuration options or materials"
+        },
+        "features": {
+          "type": "array",
+          "description": "Bullet points highlighting specific features"
+        },
+        "stock": {
+          "type": "number",
+          "description": "Current inventory stock level"
+        }
+      },
+      "required": ["id", "name", "price", "stock", "category"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Order submitted by a user",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identification of the checkout batch"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Identifier of the purchaser if authenticated"
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Purchaser complete name"
+        },
+        "address": {
+          "type": "string",
+          "description": "Delivery shipping address line"
+        },
+        "city": {
+          "type": "string",
+          "description": "Delivery city"
+        },
+        "zip": {
+          "type": "string",
+          "description": "Delivery postal area pin code"
+        },
+        "items": {
+          "type": "array",
+          "description": "Array of cart items checked out"
+        },
+        "subtotal": {
+          "type": "number",
+          "description": "Billing net articles subtotal sum before reduction"
+        },
+        "discount": {
+          "type": "number",
+          "description": "Discount applied percentage"
+        },
+        "shipping": {
+          "type": "number",
+          "description": "Delivery logistics charge in Euros"
+        },
+        "total": {
+          "type": "number",
+          "description": "Net order liability liability paid in Euros"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp indicating order placement date"
+        }
+      },
+      "required": ["id", "fullName", "address", "city", "items", "total"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Star rating and written testimonial from a customer",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the review"
+        },
+        "userId": {
+          "type": "string",
+          "description": "UID of the logged-in customer"
+        },
+        "userName": {
+          "type": "string",
+          "description": "Display name of the reviewer"
+        },
+        "userAvatar": {
+          "type": "string",
+          "description": "Profile picture URL of the reviewer"
+        },
+        "rating": {
+          "type": "number",
+          "description": "Star rating from 1 to 5"
+        },
+        "comment": {
+          "type": "string",
+          "description": "The written testimonial text"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Date of writing"
+        }
+      },
+      "required": ["id", "userName", "rating", "comment"]
+    },
+    "SiteConfig": {
+      "title": "SiteConfig",
+      "description": "Dynamic configurable text parts and FAQ lists",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identifier of the config piece"
+        },
+        "faq": {
+          "type": "array",
+          "description": "Array of question-answer pairs"
+        },
+        "footerAbout": {
+          "type": "string",
+          "description": "Text in the about column in the footer"
+        },
+        "footerContact": {
+          "type": "string",
+          "description": "Text in the contact/support column in the footer"
+        },
+        "footerWarranty": {
+          "type": "string",
+          "description": "Text in the warranty column in the footer"
+        },
+        "heroTitle": {
+          "type": "string",
+          "description": "Customized hero headline"
+        },
+        "heroSub": {
+          "type": "string",
+          "description": "Customized hero subheadline"
+        },
+        "heroDesc": {
+          "type": "string",
+          "description": "Customized hero paragraph"
+        }
+      },
+      "required": ["id"]
+    }
+  },
+  "firestore": {
+    "products/{productId}": {
+      "schema": "Product",
+      "description": "E-commerce design furniture product entities"
+    },
+    "orders/{orderId}": {
+      "schema": "Order",
+      "description": "Submitted customer checkout invoices and tracking info"
+    },
+    "reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Star ratings and written reviews posted by customers"
+    },
+    "site_config/{configId}": {
+      "schema": "SiteConfig",
+      "description": "Branding content, footer texts, and custom editable FAQs"
+    }
+  }
+}
