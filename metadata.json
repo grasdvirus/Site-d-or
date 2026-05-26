@@ -1,0 +1,6 @@
+{
+  "name": "Basecase - Modélisation Financière",
+  "description": "Une page de destination haut de gamme pour une agence de modélisation financière de premier plan, avec une typographie moderne, des animations fluides et un simulateur interactif pas-à-pas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
