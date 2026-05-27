@@ -176,7 +176,7 @@ export default function ReviewsCarousel({ lang = "fr", currentUser }: ReviewsCar
   }, [reviews, currentIndex]);
 
   const avgRating = reviews.length > 0 ? (reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length).toFixed(1) : "5.0";
-  const currentReview = reviews.length > 0 ? (reviews[currentIndex] || reviews[0]) : null;
+  const currentReview = reviews.length > 0 ? (reviews[currentIndex] || reviews[0] || {} as Review) : null;
 
   return (
     <div id="customer-reviews-section" className="space-y-12 text-left bg-[#fcfdfc] dark:bg-slate-900/40 p-6 md:p-10 rounded-3xl border border-[#e6eee3] dark:border-slate-800/80">
@@ -205,18 +205,18 @@ export default function ReviewsCarousel({ lang = "fr", currentUser }: ReviewsCar
                 <Star key={i} className={`w-3.5 h-3.5 fill-current ${i < Math.floor(Number(avgRating)) ? "opacity-100" : "opacity-30"}`} />
               ))}
             </div>
-            <p className="text-[9px] font-mono uppercase font-bold text-slate-400 dark:text-slate-500 mt-1">
+            <p className="text-[9px] font-mono uppercase font-bold text-slate-400 dark:text-slate-400 mt-1">
               {reviews.length} {lang === "en" ? "verified reviews" : "avis vérifiés"}
             </p>
           </div>
         </div>
       </div>
 
-      {/* Main Column Double Slot Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+      {/* Main Column Layout - full width list of testimonials */}
+      <div className="w-full">
         
-        {/* Carousel frame - Carousel frame occupies 7 columns */}
-        <div className="lg:col-span-7 relative bg-white dark:bg-slate-900 p-6 md:p-8 rounded-2xl border border-[#e2eae0] dark:border-slate-850 sleek-shadow-sm space-y-6 flex flex-col justify-between min-h-[220px]">
+        {/* Carousel frame */}
+        <div className="w-full relative bg-white dark:bg-slate-900 p-6 md:p-10 rounded-2xl border border-[#e2eae0] dark:border-slate-850 sleek-shadow-sm space-y-6 flex flex-col justify-between min-h-[220px]">
           
           {loading ? (
             <div className="py-12 text-center text-xs font-mono font-extrabold text-slate-400 animate-pulse">
@@ -247,7 +247,7 @@ export default function ReviewsCarousel({ lang = "fr", currentUser }: ReviewsCar
                         <h4 className="text-xs font-black text-slate-900 dark:text-slate-100 leading-none">
                           {currentReview.userName}
                         </h4>
-                        <p className="text-[9px] font-mono font-bold text-slate-400 dark:text-slate-500 mt-1 uppercase">
+                        <p className="text-[9px] font-mono font-bold text-slate-400 dark:text-slate-400 mt-1 uppercase">
                           {lang === "en" ? "Verified Owner" : "Collectionneur vérifié"}
                         </p>
                       </div>
@@ -263,7 +263,7 @@ export default function ReviewsCarousel({ lang = "fr", currentUser }: ReviewsCar
                     </div>
                   </div>
 
-                  <p className="text-xs text-slate-700 dark:text-slate-300 italic leading-relaxed font-sans font-medium">
+                  <p className="text-sm text-slate-700 dark:text-slate-300 italic leading-relaxed font-sans font-medium">
                     " {currentReview.comment} "
                   </p>
                 </div>
@@ -279,7 +279,7 @@ export default function ReviewsCarousel({ lang = "fr", currentUser }: ReviewsCar
                   <button
                     onClick={handlePrev}
                     type="button"
-                    className="p-2 bg-[#f4f8f3] dark:bg-slate-950 hover:bg-[#2d4a22] hover:text-white rounded-xl text-slate-600 dark:text-slate-200 transition-all cursor-pointer"
+                    className="p-2 bg-[#f4f8f3] dark:bg-slate-950 hover:bg-[#2d4a22] hover:text-white rounded-xl text-slate-600 dark:text-slate-200 transition-all cursor-pointer shadow-2xs"
                     title="Précédent"
                   >
                     <ChevronLeft className="w-4 h-4" />
@@ -287,7 +287,7 @@ export default function ReviewsCarousel({ lang = "fr", currentUser }: ReviewsCar
                   <button
                     onClick={handleNext}
                     type="button"
-                    className="p-2 bg-[#f4f8f3] dark:bg-slate-950 hover:bg-[#2d4a22] hover:text-white rounded-xl text-slate-600 dark:text-slate-200 transition-all cursor-pointer"
+                    className="p-2 bg-[#f4f8f3] dark:bg-slate-950 hover:bg-[#2d4a22] hover:text-white rounded-xl text-slate-600 dark:text-slate-200 transition-all cursor-pointer shadow-2xs"
                     title="Suivant"
                   >
                     <ChevronRight className="w-4 h-4" />
@@ -299,78 +299,7 @@ export default function ReviewsCarousel({ lang = "fr", currentUser }: ReviewsCar
 
         </div>
 
-        {/* Input Form Column - form occupies 5 columns */}
-        <form onSubmit={handleSubmitReview} className="lg:col-span-5 bg-white dark:bg-slate-900/80 p-6 rounded-2xl border border-[#e2eae0] dark:border-slate-850 space-y-4">
-          <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-1.5 leading-none">
-            <MessageSquare className="w-4 h-4 text-[#2d4a22]" />
-            {labels.formTitle}
-          </h3>
-
-          {/* Star selector */}
-          <div className="space-y-1.5 text-left">
-            <label className="text-[10px] font-mono uppercase font-bold text-slate-400 dark:text-slate-500">
-              {lang === "en" ? "Rating Evaluation" : "Note d'Évaluation"}
-            </label>
-            <div className="flex gap-1.5">
-              {[1, 2, 3, 4, 5].map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setRating(s)}
-                  className={`p-1 hover:scale-115 transition-transform cursor-pointer ${
-                    rating >= s ? "text-amber-500 scale-105" : "text-slate-300 dark:text-slate-700"
-                  }`}
-                >
-                  <Star className="w-5.5 h-5.5 fill-current" />
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Name entry */}
-          <div className="space-y-1 text-left">
-            <input
-              type="text"
-              required
-              disabled={submitting}
-              placeholder={labels.namePlaceholder}
-              value={userName}
-              onChange={(e) => setUserName(e.target.value)}
-              className="w-full bg-[#f4f8f3] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 focus:border-[#2d4a22] rounded-xl py-2 px-3 text-xs font-semibold text-slate-800 dark:text-slate-100 placeholder-slate-400 outline-none transition-all"
-            />
-          </div>
-
-          {/* Comment description */}
-          <div className="space-y-1 text-left">
-            <textarea
-              required
-              disabled={submitting}
-              rows={3}
-              placeholder={labels.commentPlaceholder}
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              className="w-full bg-[#f4f8f3] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 focus:border-[#2d4a22] rounded-xl py-2 px-3 text-xs font-semibold text-slate-800 dark:text-slate-100 placeholder-slate-400 outline-none transition-all resize-none"
-            ></textarea>
-          </div>
-
-          {/* Submit button */}
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full py-2.5 bg-[#2d4a22] hover:bg-[#1a2d15] disabled:bg-slate-300 text-white font-black uppercase tracking-widest text-[10px] rounded-xl transition-all cursor-pointer shadow-sm text-center"
-          >
-            {submitting ? "..." : labels.submitBtn}
-          </button>
-
-          {message && (
-            <p className={`text-[10px] font-bold mt-2 ${message.type === "success" ? "text-emerald-600 dark:text-emerald-450" : "text-rose-500"}`}>
-              {message.text}
-            </p>
-          )}
-        </form>
-
       </div>
-
     </div>
   );
 }

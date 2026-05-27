@@ -159,6 +159,10 @@
           "type": "string",
           "description": "Identifier of the config piece"
         },
+        "categories": {
+          "type": "array",
+          "description": "Array of strings representing the furniture categories"
+        },
         "faq": {
           "type": "array",
           "description": "Array of question-answer pairs"

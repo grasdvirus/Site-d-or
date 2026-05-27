@@ -9,9 +9,10 @@ interface PricingProps {
   lang?: Language;
   currency?: Currency;
   layoutMode?: "grid" | "collection";
+  categories?: string[];
 }
 
-export default function Pricing({ products, onAddToCart, lang = "fr", currency = "EUR", layoutMode = "grid" }: PricingProps) {
+export default function Pricing({ products, onAddToCart, lang = "fr", currency = "EUR", layoutMode = "grid", categories }: PricingProps) {
   const t = TRANSLATIONS[lang] || TRANSLATIONS.fr;
 
   // Filters & State
@@ -27,7 +28,9 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
 
   // Categories list matching reference image (internal keys represent pristine filter tokens)
-  const categories = ["Tous", "Lounge", "Office", "Dining", "Rocking"];
+  const categoriesList = useMemo(() => {
+    return ["Tous", ...(categories || ["Lounge", "Office", "Dining", "Rocking"])];
+  }, [categories]);
 
   // Helper translation mapping for categories
   const getCategoryLabel = (cat: string) => {
@@ -85,31 +88,11 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
   return (
     <div id="pricing-plans" className="space-y-8 text-left">
       
-      {/* Search & Categories Bar */}
-      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 bg-[#f4f8f3] dark:bg-slate-900/60 p-4.5 rounded-3xl border border-[#e6eee3] dark:border-slate-800 max-w-5xl mx-auto">
-        {/* Simple minimalist Search bar */}
-        <div className="relative flex-1 max-w-md">
-          <Search className={`absolute ${isRTL ? "right-3.5" : "left-3.5"} top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400`} />
-          <input
-            type="text"
-            placeholder={t.searchPlaceholder}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className={`w-full bg-white dark:bg-slate-900 border border-[#e2eae0] dark:border-slate-800 focus:border-[#2d4a22] rounded-xl ${isRTL ? "pr-10 pl-4" : "pl-10 pr-4"} py-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100 placeholder-slate-400 outline-none transition-all`}
-          />
-          {searchQuery && (
-            <button 
-              onClick={() => setSearchQuery("")}
-              className={`absolute ${isRTL ? "left-3" : "right-3"} top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 hover:text-slate-600 font-sans`}
-            >
-              &times;
-            </button>
-          )}
-        </div>
-
+      {/* Categories Bar */}
+      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-center gap-4 bg-[#f4f8f3] dark:bg-slate-900/60 p-4.5 rounded-3xl border border-[#e6eee3] dark:border-slate-800 max-w-2xl mx-auto">
         {/* Categories Pills list */}
-        <div className="flex flex-wrap gap-2 overflow-x-auto py-1">
-          {categories.map((cat) => (
+        <div className="flex flex-wrap gap-2 justify-center py-1">
+          {categoriesList.map((cat) => (
             <button
               key={cat}
               type="button"
@@ -201,8 +184,28 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                   <h3 className="text-sm font-extrabold font-sans text-slate-900 dark:text-slate-100 tracking-tight flex items-center justify-between pr-2">
                     <span>{product.name}</span>
                   </h3>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-450 leading-normal mt-1 font-medium">{product.tagline}</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-450 leading-normal mt-1 font-semibold">{product.tagline}</p>
                   
+                  {/* Detailed Description */}
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-2 leading-relaxed bg-slate-50/50 dark:bg-slate-950/40 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 italic">
+                    {product.description}
+                  </p>
+
+                  {/* Bullet features list */}
+                  {product.features && product.features.length > 0 && (
+                    <div className="mt-2.5 space-y-1 bg-[#2d4a22]/5 dark:bg-[#2d4a22]/10 p-2.5 rounded-xl border border-dashed border-[#2d4a22]/20 text-left">
+                      <span className="text-[9px] font-mono uppercase tracking-wider font-extrabold text-[#2d4a22] dark:text-[#84a98c] block mb-1">
+                        {lang === "en" ? "Specifications :" : lang === "es" ? "Especificaciones :" : lang === "ar" ? "المواصفات :" : "Caractéristiques :"}
+                      </span>
+                      {product.features.map((feat, fidx) => (
+                        <div key={fidx} className="flex items-start gap-1 text-[10px] text-slate-705 dark:text-slate-300">
+                          <span className="text-[#2d4a22] dark:text-[#84a98c] mr-1 flex-shrink-0">•</span>
+                          <span className="leading-tight">{feat}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Stock count display */}
                   <div className="flex items-center gap-1.5 mt-2.5">
                     <span className={`inline-block w-1.5 h-1.5 rounded-full ${product.stock > 0 ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`}></span>
@@ -215,7 +218,7 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                 {/* Color Swatch selectors */}
                 {product.colors && product.colors.length > 1 && (
                   <div className="flex gap-1.5 pt-1 items-center">
-                    <span className="text-[9px] font-mono text-slate-400 dark:text-slate-500 font-extrabold uppercase mr-1.5">
+                    <span className="text-[9px] font-mono text-slate-400 dark:text-slate-400 font-extrabold uppercase mr-1.5">
                       {lang === "en" ? "Colors:" : lang === "es" ? "Colores:" : lang === "ar" ? "الألوان :" : "Coloris :"}
                     </span>
                     {product.colors.map((color, idx) => (
@@ -245,7 +248,7 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                 {/* Sizing / Variant selection */}
                 {product.variants && product.variants.length > 1 && (
                   <div className="flex items-center gap-2">
-                    <span className="text-[9px] font-mono text-slate-400 dark:text-slate-500 font-extrabold uppercase">{product.variantsLabel || t.fabricColor} :</span>
+                    <span className="text-[9px] font-mono text-slate-400 dark:text-slate-400 font-extrabold uppercase">{product.variantsLabel || t.fabricColor} :</span>
                     <select
                       value={activeVariant || ""}
                       onChange={(e) => setSelectedVariants(prev => ({ ...prev, [product.id]: e.target.value }))}
@@ -264,7 +267,7 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
               {/* Card Footer pricing */}
               <div className="px-5.5 py-4 bg-[#fbfdfa] dark:bg-slate-950 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
                 <div>
-                  <span className="text-[9px] uppercase font-mono tracking-wider font-extrabold text-slate-400 dark:text-slate-500 block">{t.tarifBoutique}</span>
+                  <span className="text-[9px] uppercase font-mono tracking-wider font-extrabold text-slate-400 dark:text-slate-400 block">{t.tarifBoutique}</span>
                   <span className="text-base font-mono font-bold text-slate-900 dark:text-white leading-none">
                     {formatPrice(product.price, currency)}
                   </span>

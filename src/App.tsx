@@ -32,7 +32,9 @@ import {
   LogOut,
   ChevronDown,
   History,
-  AlertTriangle
+  AlertTriangle,
+  ArrowUp,
+  Star
 } from "lucide-react";
 
 import InteractiveModel from "./components/InteractiveModel";
@@ -43,8 +45,8 @@ import ReviewsCarousel from "./components/ReviewsCarousel";
 import { INITIAL_PRODUCTS } from "./data";
 import { Product, CartItem } from "./types";
 import { db, auth, googleProvider, signInWithPopup, signOut, handleFirestoreError } from "./firebase";
-import { collection, query, getDocs, doc, setDoc, deleteDoc, serverTimestamp, where } from "firebase/firestore";
-import { TRANSLATIONS, Language, Theme, Currency, formatPrice } from "./translations";
+import { collection, query, getDocs, doc, setDoc, deleteDoc, serverTimestamp, where, addDoc } from "firebase/firestore";
+import { TRANSLATIONS, Language, Theme, Currency, formatPrice, CURRENCIES } from "./translations";
 
 
 export default function App() {
@@ -66,6 +68,7 @@ export default function App() {
   const [authChecking, setAuthChecking] = useState(true);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [myOrders, setMyOrders] = useState<any[]>([]);
+  const [allOrders, setAllOrders] = useState<any[]>([]);
   const [isDbLoading, setIsDbLoading] = useState(false);
 
   // Settings & Localization parameters (persisted locally)
@@ -76,8 +79,18 @@ export default function App() {
     return (localStorage.getItem("nexus_theme") as Theme) || "white";
   });
   const [currency, setCurrency] = useState<Currency>(() => {
-    return (localStorage.getItem("nexus_currency") as Currency) || "EUR";
+    return (localStorage.getItem("nexus_currency") as Currency) || "CFA";
   });
+  const [categories, setCategories] = useState<string[]>(["Lounge", "Office", "Dining", "Rocking"]);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  
+  // Review form states
+  const [reviewFormOpen, setReviewFormOpen] = useState(false);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState("");
+  const [reviewName, setReviewName] = useState("");
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewNotif, setReviewNotif] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Active translation dictionary
@@ -116,6 +129,8 @@ export default function App() {
     address: "",
     city: "",
     zip: "",
+    phone: "",
+    email: "",
     cardNumber: "4970 •••• •••• 9012",
     cvv: "325"
   });
@@ -209,6 +224,33 @@ export default function App() {
     fetchMyOrders();
   }, [user, checkoutStep]);
 
+  // Sync all orders for the admin from Firestore
+  useEffect(() => {
+    if (!user || user.email !== "grasdvirus@gmail.com") {
+      setAllOrders([]);
+      return;
+    }
+    const fetchAllOrders = async () => {
+      try {
+        const querySnapshot = await getDocs(collection(db, "orders"));
+        const fetched: any[] = [];
+        querySnapshot.forEach((docSnap) => {
+          fetched.push({ ...docSnap.data(), id: docSnap.id });
+        });
+        // Sort by timestamp newest first
+        fetched.sort((a, b) => {
+          const timeA = a.createdAt?.seconds || 0;
+          const timeB = b.createdAt?.seconds || 0;
+          return timeB - timeA;
+        });
+        setAllOrders(fetched);
+      } catch (err) {
+        console.error("Error reading all orders for admin:", err);
+      }
+    };
+    fetchAllOrders();
+  }, [user, activeTab, checkoutStep]);
+
   // Sync Settings to LocalStorage
   useEffect(() => {
     localStorage.setItem("nexus_lang", lang);
@@ -231,6 +273,45 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("nexus_cart_list", JSON.stringify(cart));
   }, [cart]);
+
+  // Track scroll position to reveal "Back to Top" scrolling trigger
+  useEffect(() => {
+    const handleScroll = () => {
+      setShowScrollTop(window.scrollY > 300);
+    };
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // Fetch product categories from Firestore dynamic configuration
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const docSnap = await getDocs(query(collection(db, "site_config")));
+        const catDoc = docSnap.docs.find(d => d.id === "categories_config");
+        if (catDoc && catDoc.exists()) {
+          const data = catDoc.data();
+          if (data && Array.isArray(data.categories)) {
+            setCategories(data.categories);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load categories list from Firestore:", err);
+      }
+    };
+    fetchCategories();
+  }, [user]);
+
+  const handleCategoriesChange = async (newCategories: string[]) => {
+    try {
+      const docRef = doc(db, "site_config", "categories_config");
+      await setDoc(docRef, { categories: newCategories });
+      setCategories(newCategories);
+    } catch (err) {
+      console.error("Failed to update categories configuration in Firestore:", err);
+      alert("Erreur lors de l'enregistrement des catégories.");
+    }
+  };
 
   // Google Sign-In helper triggers Google Auth Provider
   const handleGoogleLogin = async () => {
@@ -262,7 +343,12 @@ export default function App() {
         for (const prod of INITIAL_PRODUCTS) {
           await setDoc(doc(db, "products", prod.id), prod);
         }
-        alert("Catalogue démo synchronisé avec succès dans Firestore !");
+        // Also seed categories config doc
+        const catRef = doc(db, "site_config", "categories_config");
+        await setDoc(catRef, { categories: ["Lounge", "Office", "Dining", "Rocking"] });
+        setCategories(["Lounge", "Office", "Dining", "Rocking"]);
+
+        alert("Idées démo et catégories synchronisées avec succès dans Firestore !");
         // Re-read products trigger
         const q = query(collection(db, "products"));
         const querySnapshot = await getDocs(q);
@@ -407,7 +493,8 @@ export default function App() {
   // Checkout values calculations
   const subtotal = cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
   const discountAmount = Math.round((subtotal * activeDiscount) / 100);
-  const shippingCharge = subtotal >= 250 || subtotal === 0 ? 0 : 25;
+  const currentRate = CURRENCIES[currency]?.rate || 1.0;
+  const shippingCharge = subtotal === 0 ? 0 : (2000 / currentRate);
   const grandTotal = Math.max(0, subtotal - discountAmount + shippingCharge);
 
   const handleLaunchCheckout = () => {
@@ -436,6 +523,8 @@ export default function App() {
         address: shippingAddress.address,
         city: shippingAddress.city,
         zip: shippingAddress.zip || "",
+        phone: shippingAddress.phone || "",
+        email: shippingAddress.email || "",
         items: cart.map(item => ({
           productId: item.product.id,
           name: item.product.name,
@@ -667,6 +756,9 @@ export default function App() {
               onDeleteProduct={handleDeleteProduct}
               currentUser={user}
               onGoogleLogin={handleGoogleLogin}
+              categories={categories}
+              onCategoriesChange={handleCategoriesChange}
+              orders={allOrders}
             />
           </motion.div>
         ) : activeTab === "collection" ? (
@@ -705,6 +797,7 @@ export default function App() {
               lang={lang} 
               currency={currency} 
               layoutMode="collection" 
+              categories={categories}
             />
           </motion.div>
         ) : (
@@ -818,7 +911,7 @@ export default function App() {
                       
                       {/* Interactive colors swatches */}
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] uppercase font-mono tracking-wider font-bold text-slate-400 dark:text-slate-500">
+                        <span className="text-[10px] uppercase font-mono tracking-wider font-bold text-slate-400 dark:text-slate-400">
                           {lang === 'en' ? "Shades:" : lang === 'es' ? "Tonos:" : lang === 'ar' ? "درجات الألوان :" : "Nuancier :"} <strong className="text-slate-700 dark:text-slate-205 font-sans font-medium">{spotlightProduct.colors[spotlightColorIdx]?.name}</strong>
                         </span>
                         
@@ -843,7 +936,7 @@ export default function App() {
 
                       {/* Quantity stepping matches Image mockup precisely */}
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] uppercase font-mono tracking-wider font-bold text-slate-400 dark:text-slate-500">
+                        <span className="text-[10px] uppercase font-mono tracking-wider font-bold text-slate-400 dark:text-slate-400">
                           {lang === 'en' ? "Select Quantity" : lang === 'es' ? "Cantidad" : lang === 'ar' ? "تحديد كمية الطلب" : "Sélectionner quantité"}
                         </span>
                         
@@ -910,7 +1003,7 @@ export default function App() {
                 <h2 className="font-sans text-2xl md:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
                   {lang === 'en' ? "Master Seating Pieces" : lang === 'es' ? "El Mobiliario de Autor" : lang === 'ar' ? "أثاث ومقاعد المشغل" : "Le Mobilier d'Atelier"}
                 </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-405 font-medium leading-relaxed font-sans">
+                <p className="text-xs text-slate-600 dark:text-slate-300 font-medium leading-relaxed font-sans">
                   {lang === 'en' ? "Explore our exclusive handcrafted high-end premium seats, individually sculpted and guaranteed for life." : lang === 'es' ? "Nuestros asientos exclusivos están hechos a medida con materiales de calidad." : lang === 'ar' ? "تصفح إبداعاتنا الحصرية للمقاعد والأثاث الفاخر المصنوع يدوياً قطعة بقطعة مع ضمان طويل المدى." : "Parcourez nos créations exclusives de mobilier haut de gamme, fabriquées à la pièce et garanties à vie."}
                 </p>
               </div>
@@ -921,6 +1014,7 @@ export default function App() {
                 onAddToCart={handleAddToCart} 
                 lang={lang} 
                 currency={currency} 
+                categories={categories}
               />
 
               {products.length > 5 && (
@@ -948,13 +1042,13 @@ export default function App() {
                 <h2 className="font-sans text-2xl md:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
                   {lang === 'en' ? "Orris Configurator" : lang === 'es' ? "Modelador Orris" : lang === 'ar' ? "موجّه التخصيص لمنفاذ أوريس" : "Le Simulateur Orris"}
                 </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-405 font-medium font-sans">
-                  {lang === 'en' ? "Select your eco-certified raw materials, add footrests or lumbar support cushions, and see your customized creation update instantly." : lang === 'es' ? "Diseñe su propia configuración y verifique la simulación en tiempo real." : lang === 'ar' ? "اختر المواد الصديقة للبيئة، أضف مسامير القدم أو وسائد الأمان لراحتك وتحقق من النتيجة حياً." : "Incrustez vos matières premières éco-certifiées, ajoutez des ottomanes ou des coussins et validez votre configuration unique en direct."}
+                <p className="text-xs text-slate-600 dark:text-slate-300 font-medium font-sans">
+                  {lang === 'en' ? "Select your eco-certified raw materials, add footrests or lumbar support cushions, and see your customized creation update instantly." : lang === 'es' ? "Diseñe su propia configuración y verifique la simulación en tempo real." : lang === 'ar' ? "اختر المواد الصديقة للبيئة، أضف مسامير القدم أو وسائد الأمان لراحتك وتحقق من النتيجة حياً." : "Incrustez vos matières premières éco-certifiées, ajoutez des ottomanes ou des coussins et validez votre configuration unique en direct."}
                 </p>
               </div>
 
               {/* Chair Customizer */}
-              <InteractiveModel onAddToCart={handleAddToCart} lang={lang} currency={currency} />
+              <InteractiveModel products={products} onAddToCart={handleAddToCart} lang={lang} currency={currency} />
             </section>
 
             {/* REVIEWS TESTIMONIALS CAROUSEL */}
@@ -967,7 +1061,7 @@ export default function App() {
                   {lang === 'en' ? "Assistance Center" : lang === 'es' ? "Centro de Soporte" : lang === 'ar' ? "الدعم الفني واللوجستي" : "Assistance"}
                 </span>
                 <h2 className="font-sans text-2xl md:text-3xl font-black text-slate-900 dark:text-white tracking-tight">{t.faqTitle}</h2>
-                <p className="text-xs text-slate-500 dark:text-slate-405 font-medium leading-relaxed font-sans">
+                <p className="text-xs text-slate-600 dark:text-slate-300 font-medium leading-relaxed font-sans">
                   {lang === 'en' ? "Want to know more about shipping of large wooden crates, our eco-friendly craftsmanship, or showroom booking? Read our answers below." : lang === 'es' ? "¿Desea saber más sobre los envíos, nuestro showroom o garantía? Consulte respuestas rápidas." : lang === 'ar' ? "هل تود معرفة المزيد عن تسليم القطع الضخمة، نجارتنا الصديقة للبيئة أو المعرض؟ يرجى قراءة التفاصيل في الأسفل." : "Vous souhaitez en savoir plus sur l'expédition de pièces imposantes, notre ébénisterie éco-responsable ou l'essai en showroom ? Retrouvez nos réponses claires ci-dessous."}
                 </p>
               </div>
@@ -991,7 +1085,7 @@ export default function App() {
             <p className="leading-relaxed font-medium">
               {siteConfig?.footerAbout || (lang === 'en' ? "Artistic carpentry atelier and manufacturer of premium ergonomic comfort seating. All materials originate from state-certified sustainable forests with Retro-Scandinavian design." : lang === 'es' ? "Taller de carpintería artesanal de gran confort inspirado en corrientes nórdicas." : lang === 'ar' ? "ورشة نجارة فنية عالية الجودة لتصنيع المقاعد الوظيفية المريحة. جميع موادنا مستخلصة من غابات مستدامة." : "Atelier d'ébénisterie d'art et de confection d'assises ergonomiques de grand confort. Nos matières premières proviennent de forêts certifiées à gestion durable. Cabinet d'inspiration rétro-scandinave.")}
             </p>
-            <p className="text-[10px] font-mono text-slate-400 dark:text-slate-550">
+            <p className="text-[10px] font-mono text-slate-400 dark:text-slate-400">
               {lang === 'en' ? "Classic Retro-Scandinavian inspired studio." : lang === 'es' ? "Estilo nórdico retro-escandinavo." : lang === 'ar' ? "ستوديو معاصر مستوحى من الذوق الاسكندنافي القديم." : "Cabinet d'inspiration rétro-scandinave."}
             </p>
           </div>
@@ -1015,7 +1109,7 @@ export default function App() {
             <p className="leading-relaxed font-medium">
               {siteConfig?.footerWarranty || (lang === 'en' ? "Every piece bought online includes a 5-year constructor warranty coverage on foam resilience along with direct workspace support." : lang === 'es' ? "Toda compra incluye cobertura de 5 años contra affaissement estructural." : lang === 'ar' ? "تستفيد جميع المنتجات المشترات إلكترونياً من تأمين وحماية ضد الأعطال الهيكلية لمدة 5 سنوات." : "Toutes les pièces commandées en ligne bénéficient d'une assurance contre les déformations de mousse de 5 ans et d'une assistance directe par chat d'atelier.")}
             </p>
-            <div className="text-slate-400 dark:text-slate-500 font-medium">
+            <div className="text-slate-400 dark:text-slate-400 font-medium">
               &copy; {new Date().getFullYear()} nexus. All Rights Reserved.
             </div>
           </div>
@@ -1082,7 +1176,7 @@ export default function App() {
 
                       <div className="bg-[#f4f8f3] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 p-4 rounded-xl text-left space-y-2.5">
                         <div className="flex justify-between items-center border-b border-[#e2eae0] dark:border-slate-800 pb-2 text-[11px] font-mono">
-                          <span className="text-slate-450 dark:text-slate-500 font-bold">{t.trackingNumber} :</span>
+                          <span className="text-slate-500 dark:text-slate-400 font-bold">{t.trackingNumber} :</span>
                           <span className="text-[#2d4a22] dark:text-emerald-400 font-black underline">{orderTracking}</span>
                         </div>
                         <div className="space-y-1 text-xs text-slate-650 dark:text-slate-350 font-medium font-sans">
@@ -1118,7 +1212,7 @@ export default function App() {
 
                       <div className="space-y-3.5">
                         <div className="space-y-1.5">
-                          <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{t.fullName} *</label>
+                          <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{t.fullName} *</label>
                           <input
                             type="text"
                             required
@@ -1130,7 +1224,7 @@ export default function App() {
                         </div>
 
                         <div className="space-y-1.5">
-                          <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{t.shippingAddress} *</label>
+                          <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{t.shippingAddress} *</label>
                           <input
                             type="text"
                             required
@@ -1143,7 +1237,7 @@ export default function App() {
 
                         <div className="grid grid-cols-2 gap-3.5">
                           <div className="space-y-1.5">
-                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{t.zipCode} *</label>
+                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{t.zipCode} *</label>
                             <input
                               type="text"
                               required
@@ -1155,7 +1249,7 @@ export default function App() {
                           </div>
                           
                           <div className="space-y-1.5">
-                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{t.city} *</label>
+                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{t.city} *</label>
                             <input
                               type="text"
                               required
@@ -1167,8 +1261,35 @@ export default function App() {
                           </div>
                         </div>
 
+                        {/* Interactive contact details block requested by user */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                          <div className="space-y-1.5">
+                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-[#2d4a22] dark:text-emerald-450">Tél de contact (Pour livraison) *</label>
+                            <input
+                              type="tel"
+                              required
+                              placeholder="ex : +221 77 000 00 00"
+                              value={shippingAddress.phone}
+                              onChange={(e) => setShippingAddress({ ...shippingAddress, phone: e.target.value })}
+                              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 pb-1 focus:border-[#2d4a22] rounded-lg px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-150 outline-none"
+                            />
+                          </div>
+                          
+                          <div className="space-y-1.5">
+                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-[#2d4a22] dark:text-emerald-450">Email de contact *</label>
+                            <input
+                              type="email"
+                              required
+                              placeholder="nom@exemple.com"
+                              value={shippingAddress.email}
+                              onChange={(e) => setShippingAddress({ ...shippingAddress, email: e.target.value })}
+                              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 pb-1 focus:border-[#2d4a22] rounded-lg px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-150 outline-none"
+                            />
+                          </div>
+                        </div>
+
                         <div className="space-y-1.5">
-                          <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                          <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">
                             {lang === 'en' ? "Secure Payment (Simulated demo)" : lang === 'es' ? "Detalles del pago seguro (simulación)" : lang === 'ar' ? "بيانات الدفع الإلكتروني الآمن (نموذج محاكاة)" : "Données Bancaires (Simulé de démos)"}
                           </label>
                           <div className="grid grid-cols-3 gap-2 bg-slate-50 dark:bg-slate-950 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
@@ -1176,7 +1297,7 @@ export default function App() {
                               type="text"
                               disabled
                               value={shippingAddress.cardNumber}
-                              className="col-span-2 bg-transparent text-xs text-slate-450 dark:text-slate-400 outline-none pl-1"
+                              className="col-span-2 bg-transparent text-xs text-slate-500 dark:text-slate-300 outline-none pl-1"
                             />
                             <div className="text-right text-xs font-mono font-semibold text-slate-400 pr-1 select-none">
                               CVV {shippingAddress.cvv}
@@ -1220,7 +1341,7 @@ export default function App() {
                           />
                           <div className="flex-1 min-w-0">
                             <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">{item.product.name}</h4>
-                            <p className="text-[10px] text-slate-450 dark:text-slate-500 font-mono mt-0.5">
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
                               {item.selectedColor.name} {item.selectedVariant ? `• ${item.selectedVariant}` : ""}
                             </p>
                             <p className="text-[10px] text-[#2d4a22] dark:text-emerald-450 font-bold font-mono">
@@ -1258,7 +1379,7 @@ export default function App() {
 
                       {/* Promo Code section */}
                       <form onSubmit={handleApplyPromo} className="pt-4 border-t border-[#e6eee3] dark:border-slate-800 space-y-2 text-left">
-                        <label className="block text-[9px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{lang === 'en' ? "Promo Coupon Code" : "Ajouter un code de réduction"}</label>
+                        <label className="block text-[9px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{lang === 'en' ? "Promo Coupon Code" : "Ajouter un code de réduction"}</label>
                         <div className="flex gap-2">
                           <input
                             type="text"
@@ -1303,11 +1424,11 @@ export default function App() {
                       <div className="flex justify-between">
                         <span>{t.shipping} :</span>
                         <span className="font-mono text-slate-800 dark:text-slate-105 font-bold">
-                          {shippingCharge === 0 ? (lang === "en" ? "Free" : lang === "es" ? "Gratis" : lang === "ar" ? "شحن مجاني" : "Gratuit") : formatPrice(shippingCharge, currency)}
+                          {formatPrice(shippingCharge, currency)}
                         </span>
                       </div>
-                      <div className="flex justify-between text-slate-400 dark:text-slate-500 text-[10px] italic">
-                        <span>{lang === 'en' ? "Premium wood casing is free after 250." : "Emballage premium en bois offert dès 250 d'achat."}</span>
+                      <div className="flex justify-between text-slate-400 dark:text-slate-400 text-[10px] italic">
+                        <span>{lang === 'en' ? "Fixed standard shipping charge." : "Frais d'expédition forfaitaires fixes de 2000 unités."}</span>
                       </div>
                       <div className="h-px bg-[#e6eee3] dark:bg-slate-800 my-2"></div>
                       <div className="flex justify-between text-[#2d4a22] dark:text-emerald-450 text-sm font-black uppercase">
@@ -1376,7 +1497,7 @@ export default function App() {
                   <h4 className="text-sm font-black text-slate-900 dark:text-white truncate mt-1">
                     {user.displayName || "Client nexus."}
                   </h4>
-                  <p className="text-[11px] text-slate-450 dark:text-slate-400 font-mono truncate">{user.email}</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate">{user.email}</p>
                 </div>
 
                 <button
@@ -1390,7 +1511,7 @@ export default function App() {
 
               {/* Past Receipts and Purchases list */}
               <div className="space-y-3">
-                <h5 className="text-[10px] font-mono uppercase tracking-wider text-slate-400 dark:text-slate-500 font-extrabold flex items-center gap-1.5">
+                <h5 className="text-[10px] font-mono uppercase tracking-wider text-slate-400 dark:text-slate-400 font-extrabold flex items-center gap-1.5">
                   <History className="w-4 h-4 text-[#2d4a22]" /> 
                   {t.myPurchases} ({myOrders.length})
                 </h5>
@@ -1409,7 +1530,7 @@ export default function App() {
                       {/* Nested ordered items listing */}
                       <div className="mt-2 space-y-1">
                         {ord.items?.map((it: any, k: number) => (
-                          <div key={k} className="flex justify-between text-[10px] text-slate-400 dark:text-slate-500 italic font-medium font-sans">
+                          <div key={k} className="flex justify-between text-[10px] text-slate-400 dark:text-slate-400 italic font-medium font-sans">
                             <span>&bull; {it.quantity}x {it.name} ({it.selectedColor?.name || ""})</span>
                             <span className="font-mono">{formatPrice(it.price, currency)}</span>
                           </div>
@@ -1419,16 +1540,41 @@ export default function App() {
                   ))}
                   {myOrders.length === 0 && (
                     <div className="text-center py-6 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50/30 dark:bg-slate-950/10">
-                      <p className="text-[11px] text-slate-450 dark:text-slate-550 italic font-sans">{t.noOrdersYet}</p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 italic font-sans">{t.noOrdersYet}</p>
                     </div>
                   )}
                 </div>
               </div>
 
+              {/* Client write feedback action */}
+              <div className="bg-[#2d4a22]/5 dark:bg-[#2d4a22]/10 p-4 border border-[#cadac4] dark:border-slate-800 rounded-2xl flex items-center justify-between gap-4">
+                <div className="space-y-0.5">
+                  <h6 className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                    <Star className="w-4 h-4 text-amber-500 fill-amber-400" />
+                    Laisser un avis
+                  </h6>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Exprimez votre avis sur l'Atelier pour qu'il s'affiche sur notre site !</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReviewName(user?.displayName || "");
+                    setReviewRating(5);
+                    setReviewComment("");
+                    setReviewNotif("");
+                    setUserDropdownOpen(false);
+                    setReviewFormOpen(true);
+                  }}
+                  className="px-3.5 py-2 bg-[#2d4a22] hover:bg-[#1a2d15] text-white text-[10px] uppercase font-black tracking-widest rounded-xl transition-all cursor-pointer flex-shrink-0"
+                >
+                  Rédiger
+                </button>
+              </div>
+
               {/* Secure restoration option for grasdvirus@gmail.com */}
               {user.email === "grasdvirus@gmail.com" && (
                 <div className="bg-indigo-50/40 dark:bg-indigo-950/20 p-3 rounded-2xl border border-indigo-100/30 dark:border-indigo-900/30 space-y-2">
-                  <p className="text-[9px] font-mono tracking-wider font-extrabold text-indigo-705 dark:text-indigo-400 uppercase">Option exclusive d'administration</p>
+                  <p className="text-[9px] font-mono tracking-wider font-extrabold text-indigo-700 dark:text-indigo-400 uppercase">Option exclusive d'administration</p>
                   <button
                     type="button"
                     onClick={() => {
@@ -1494,7 +1640,7 @@ export default function App() {
               <div className="space-y-4">
                 {/* Language selection tab */}
                 <div className="space-y-2">
-                  <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">
                     {t.langLabel}
                   </label>
                   <div className="grid grid-cols-4 gap-2">
@@ -1517,7 +1663,7 @@ export default function App() {
 
                 {/* Theme switching buttons */}
                 <div className="space-y-2">
-                  <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">
                     {t.themeLabel}
                   </label>
                   <div className="grid grid-cols-2 gap-2">
@@ -1550,7 +1696,7 @@ export default function App() {
 
                 {/* Currency select tabs */}
                 <div className="space-y-2">
-                  <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">
                     {t.currencyLabel}
                   </label>
                   <div className="grid grid-cols-3 gap-2">
@@ -1581,6 +1727,160 @@ export default function App() {
               </button>
             </motion.div>
           </div>
+        )}
+
+        {/* CUSTOM REVIEW WRITING MODAL OVERLAY */}
+        {reviewFormOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
+            {/* Backdrop blur */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setReviewFormOpen(false)}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-xs cursor-pointer"
+            />
+
+            {/* Modal Card */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative bg-white dark:bg-slate-900 border border-[#e6eee3] dark:border-slate-800 rounded-[2rem] shadow-2xl p-6 md:p-8 max-w-md w-full z-10 text-left space-y-5 max-h-[90vh] overflow-y-auto select-text"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+                <div className="flex items-center gap-2">
+                  <Star className="w-5 h-5 text-amber-500 fill-amber-400" />
+                  <h3 className="font-sans font-black text-slate-900 dark:text-white text-base">
+                    Publier un avis client
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReviewFormOpen(false)}
+                  className="p-1 px-2.5 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-750 text-slate-500 text-sm font-bold rounded-lg cursor-pointer transition-all"
+                >
+                  &times;
+                </button>
+              </div>
+
+              {/* Form body */}
+              <div className="space-y-4">
+                
+                {reviewNotif && (
+                  <div className={`p-3 rounded-xl text-xs font-semibold ${
+                    reviewNotif.includes("Succès") || reviewNotif.includes("Merci")
+                      ? "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-400 border border-emerald-100/30"
+                      : "bg-rose-50 dark:bg-rose-955/20 text-rose-800 dark:text-rose-400 border border-rose-100/30"
+                  }`}>
+                    {reviewNotif}
+                  </div>
+                )}
+
+                {/* Rating selection stars */}
+                <div className="space-y-1.5 text-center py-2 bg-slate-50/50 dark:bg-slate-950/40 border border-slate-100 dark:border-slate-850 rounded-2xl">
+                  <span className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">Évaluation ({reviewRating} / 5)</span>
+                  <div className="flex items-center justify-center gap-1.5 mt-1">
+                    {[1, 2, 3, 4, 5].map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setReviewRating(s)}
+                        className="p-1 cursor-pointer transition-transform hover:scale-125"
+                      >
+                        <Star className={`w-6 h-6 ${s <= reviewRating ? "text-amber-500 fill-amber-400" : "text-slate-200 fill-slate-100 dark:text-slate-800 dark:fill-slate-850"}`} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Name */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Votre Nom d'affichage</label>
+                  <input
+                    type="text"
+                    placeholder="ex : Alexandre D."
+                    value={reviewName}
+                    onChange={(e) => setReviewName(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-150 dark:bg-slate-955 dark:border-slate-800 dark:text-white rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-[#2d4a22] focus:bg-white transition-colors"
+                  />
+                </div>
+
+                {/* Comment */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Votre Commentaire</label>
+                  <textarea
+                    rows={4}
+                    placeholder="Partagez vos impressions sur la finition, l'ergonomie, la splendeur du bois d'art..."
+                    value={reviewComment}
+                    onChange={(e) => setReviewComment(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-150 dark:bg-slate-955 dark:border-slate-800 dark:text-white rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-[#2d4a22] focus:bg-white transition-colors resize-none"
+                  />
+                  <p className="text-[10px] text-slate-400 italic">Minimum 5 caractères.</p>
+                </div>
+
+                {/* Submit button */}
+                <button
+                  type="button"
+                  disabled={reviewSubmitting}
+                  onClick={async () => {
+                    const trimmedName = reviewName.trim();
+                    const trimmedComment = reviewComment.trim();
+                    if (!trimmedComment || trimmedComment.length < 5) {
+                      setReviewNotif("Le commentaire doit faire au moins 5 caractères.");
+                      return;
+                    }
+
+                    try {
+                      setReviewSubmitting(true);
+                      setReviewNotif("");
+
+                      const docId = `rev-${Date.now()}`;
+                      await addDoc(collection(db, "reviews"), {
+                        id: docId,
+                        userName: trimmedName || "Client nexus.",
+                        userId: user?.uid || "anonymous",
+                        userAvatar: user?.photoURL || "",
+                        rating: reviewRating,
+                        comment: trimmedComment,
+                        createdAt: serverTimestamp(),
+                      });
+
+                      setReviewNotif("Succès ! Merci infiniment pour votre avis, il est maintenant publié sur le site.");
+                      setReviewComment("");
+                      
+                      setTimeout(() => {
+                        setReviewFormOpen(false);
+                      }, 2500);
+
+                    } catch (e: any) {
+                      console.error("Failed to commit user review to Firestore:", e);
+                      setReviewNotif("Échec de la publication de l'avis.");
+                    } finally {
+                      setReviewSubmitting(false);
+                    }
+                  }}
+                  className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-[#ffffff] text-xs uppercase font-extrabold tracking-widest py-3.5 rounded-xl cursor-pointer shadow-sm transition-all text-center flex items-center justify-center gap-2"
+                >
+                  {reviewSubmitting ? "Publication..." : "Publier l'avis"}
+                </button>
+
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* BACK TO TOP SCROLL BUTTON */}
+        {showScrollTop && (
+          <button
+            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+            className="fixed bottom-6 right-6 z-40 p-3 bg-[#2d4a22] hover:bg-[#1a2d15] text-[#ffffff] rounded-full shadow-lg transition-all hover:scale-110 active:scale-95 flex items-center justify-center cursor-pointer border border-[#84a98c]/30"
+            title="Remonter en haut"
+            id="back-to-top-btn"
+          >
+            <ArrowUp className="w-5 h-5" />
+          </button>
         )}
       </AnimatePresence>
 

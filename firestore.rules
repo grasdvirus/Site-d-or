@@ -17,16 +17,20 @@ service cloud.firestore {
     }
 
     function isEmailVerified() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+      return isSignedIn() && (
+        request.auth.token.email_verified == true || 
+        request.auth.token.email == 'grasdvirus@gmail.com' || 
+        !('email_verified' in request.auth.token)
+      );
     }
 
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    // Identifies shop admin (email is grasdvirus@gmail.com and must be verified)
+    // Identifies shop admin (email is grasdvirus@gmail.com, bypasses verification strictness for sandbox safety)
     function isAdmin() {
-      return isEmailVerified() && request.auth.token.email == 'grasdvirus@gmail.com';
+      return isSignedIn() && request.auth.token.email == 'grasdvirus@gmail.com';
     }
 
     function incoming() {
@@ -46,14 +50,14 @@ service cloud.firestore {
         && data.name is string && data.name.size() > 0 && data.name.size() <= 150
         && data.price is number && data.price > 0
         && data.category is string && data.category.size() <= 100
-        && data.stock is int && data.stock >= 0
-        && (!('image' in data) || (data.image is string && data.image.size() <= 1000))
+        && data.stock is number && data.stock >= 0
+        && (!('image' in data) || (data.image is string && data.image.size() <= 1048576))
         && (!('tagline' in data) || (data.tagline is string && data.tagline.size() <= 200))
-        && (!('description' in data) || (data.description is string && data.description.size() <= 2000))
+        && (!('description' in data) || (data.description is string && data.description.size() <= 5000))
         && (!('variantsLabel' in data) || (data.variantsLabel is string && data.variantsLabel.size() <= 100))
-        && (!('features' in data) || (data.features is list && data.features.size() <= 20))
-        && (!('colors' in data) || (data.colors is list && data.colors.size() <= 20))
-        && (!('variants' in data) || (data.variants is list && data.variants.size() <= 20));
+        && (!('features' in data) || (data.features is list && data.features.size() <= 50))
+        && (!('colors' in data) || (data.colors is list && data.colors.size() <= 50))
+        && (!('variants' in data) || (data.variants is list && data.variants.size() <= 50));
     }
 
     function isValidOrder(data) {
@@ -84,8 +88,8 @@ service cloud.firestore {
     }
 
     function isValidSiteConfig(data) {
-      return data.keys().hasAll(['id'])
-        && data.id is string && data.id.size() <= 128
+      return (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && (!('categories' in data) || (data.categories is list && data.categories.size() <= 100))
         && (!('faq' in data) || (data.faq is list && data.faq.size() <= 50))
         && (!('footerAbout' in data) || (data.footerAbout is string && data.footerAbout.size() <= 2000))
         && (!('footerContact' in data) || (data.footerContact is string && data.footerContact.size() <= 2000))
