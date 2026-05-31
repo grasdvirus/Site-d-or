@@ -45,7 +45,7 @@ import ReviewsCarousel from "./components/ReviewsCarousel";
 import { INITIAL_PRODUCTS } from "./data";
 import { Product, CartItem } from "./types";
 import { db, auth, googleProvider, signInWithPopup, signOut, handleFirestoreError } from "./firebase";
-import { collection, query, getDocs, doc, setDoc, deleteDoc, serverTimestamp, where, addDoc } from "firebase/firestore";
+import { collection, query, getDocs, getDoc, doc, setDoc, deleteDoc, serverTimestamp, where, addDoc } from "firebase/firestore";
 import { TRANSLATIONS, Language, Theme, Currency, formatPrice, CURRENCIES } from "./translations";
 
 
@@ -82,6 +82,7 @@ export default function App() {
     return (localStorage.getItem("nexus_currency") as Currency) || "CFA";
   });
   const [categories, setCategories] = useState<string[]>(["Lounge", "Office", "Dining", "Rocking"]);
+  const [customOptions, setCustomOptions] = useState<Record<string, { label: string; values: string[] }[]>>({});
   const [showScrollTop, setShowScrollTop] = useState(false);
   
   // Review form states
@@ -185,15 +186,19 @@ export default function App() {
     fetchProducts();
   }, [user]);
 
-  // Sync site dynamic configuration from Firestore main_config document
+  // Sync site dynamic configuration from Firestore general or main_config document
   useEffect(() => {
     const fetchSiteConfig = async () => {
       try {
         const q = query(collection(db, "site_config"));
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
-          const matched = snapshot.docs.find(d => d.id === "main_config") || snapshot.docs[0];
-          setSiteConfig(matched.data() as any);
+          const matched = snapshot.docs.find(d => d.id === "general") || 
+                          snapshot.docs.find(d => d.id === "main_config") ||
+                          snapshot.docs.find(d => d.id !== "categories_config");
+          if (matched) {
+            setSiteConfig({ id: matched.id, ...matched.data() } as any);
+          }
         }
       } catch (err) {
         console.error("Failed to load global site configuration values from Firestore:", err);
@@ -313,6 +318,33 @@ export default function App() {
     }
   };
 
+  // Sync custom options from Firestore on mount/activeTab change
+  useEffect(() => {
+    const fetchCustomOptions = async () => {
+      try {
+        const docRef = doc(db, "site_config", "custom_options_config");
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setCustomOptions(docSnap.data().product_options_map || {});
+        }
+      } catch (err) {
+        console.error("Failed to load product custom options from Firestore:", err);
+      }
+    };
+    fetchCustomOptions();
+  }, [activeTab]);
+
+  const handleSaveCustomOptions = async (newMap: Record<string, { label: string; values: string[] }[]>) => {
+    try {
+      const docRef = doc(db, "site_config", "custom_options_config");
+      await setDoc(docRef, { product_options_map: newMap });
+      setCustomOptions(newMap);
+    } catch (err) {
+      console.error("Failed to save custom options in Firestore:", err);
+      alert("Erreur lors de la sauvegarde des options de personnalisation.");
+    }
+  };
+
   // Google Sign-In helper triggers Google Auth Provider
   const handleGoogleLogin = async () => {
     try {
@@ -395,6 +427,22 @@ export default function App() {
       } catch (fmtDocErr: any) {
         const schemaErr = JSON.parse(fmtDocErr.message);
         alert(`Erreur de suppression Firestore : ${schemaErr.message}`);
+      }
+    }
+  };
+
+  const handleDeleteOrder = async (orderId: string) => {
+    try {
+      await deleteDoc(doc(db, "orders", orderId));
+      setAllOrders(allOrders.filter(ord => ord.id !== orderId));
+      setMyOrders(myOrders.filter(ord => ord.id !== orderId));
+    } catch (e: any) {
+      console.error("Order deletion failed:", e);
+      try {
+        handleFirestoreError(e);
+      } catch (fmtDocErr: any) {
+        const schemaErr = JSON.parse(fmtDocErr.message);
+        alert(`Erreur de suppression de la commande Firestore : ${schemaErr.message}`);
       }
     }
   };
@@ -759,6 +807,10 @@ export default function App() {
               categories={categories}
               onCategoriesChange={handleCategoriesChange}
               orders={allOrders}
+              onDeleteOrder={handleDeleteOrder}
+              customOptions={customOptions}
+              onSaveCustomOptions={handleSaveCustomOptions}
+              onSaveSiteConfig={setSiteConfig}
             />
           </motion.div>
         ) : activeTab === "collection" ? (
@@ -1048,7 +1100,14 @@ export default function App() {
               </div>
 
               {/* Chair Customizer */}
-              <InteractiveModel products={products} onAddToCart={handleAddToCart} lang={lang} currency={currency} />
+              <InteractiveModel 
+                products={products} 
+                onAddToCart={handleAddToCart} 
+                lang={lang} 
+                currency={currency} 
+                customOptions={customOptions}
+                currentUser={user}
+              />
             </section>
 
             {/* REVIEWS TESTIMONIALS CAROUSEL */}
@@ -1067,7 +1126,7 @@ export default function App() {
               </div>
 
               {/* Accordion list */}
-              <FAQ lang={lang} customFaqs={siteConfig?.faq} />
+              <FAQ lang={lang} customFaqs={siteConfig?.faqs || siteConfig?.faq} />
             </section>
           </>
         )}

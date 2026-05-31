@@ -51,7 +51,7 @@ service cloud.firestore {
         && data.price is number && data.price > 0
         && data.category is string && data.category.size() <= 100
         && data.stock is number && data.stock >= 0
-        && (!('image' in data) || (data.image is string && data.image.size() <= 1048576))
+        && (!('image' in data) || (data.image is string && data.image.size() <= 5000000))
         && (!('tagline' in data) || (data.tagline is string && data.tagline.size() <= 200))
         && (!('description' in data) || (data.description is string && data.description.size() <= 5000))
         && (!('variantsLabel' in data) || (data.variantsLabel is string && data.variantsLabel.size() <= 100))
@@ -91,6 +91,7 @@ service cloud.firestore {
       return (!('id' in data) || (data.id is string && data.id.size() <= 128))
         && (!('categories' in data) || (data.categories is list && data.categories.size() <= 100))
         && (!('faq' in data) || (data.faq is list && data.faq.size() <= 50))
+        && (!('faqs' in data) || (data.faqs is list && data.faqs.size() <= 50))
         && (!('footerAbout' in data) || (data.footerAbout is string && data.footerAbout.size() <= 2000))
         && (!('footerContact' in data) || (data.footerContact is string && data.footerContact.size() <= 2000))
         && (!('footerWarranty' in data) || (data.footerWarranty is string && data.footerWarranty.size() <= 2000))

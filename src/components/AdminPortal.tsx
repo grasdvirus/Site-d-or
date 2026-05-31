@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Lock, Unlock, Plus, Trash2, Tag, Layers, Coins, ChevronDown, ChevronUp, Image as ImageIcon, Sliders, CheckCircle2, AlertTriangle, Hammer, ShieldCheck, Box, UserCheck, Settings, HelpCircle, FileText, Globe } from "lucide-react";
+import { Lock, Unlock, Plus, Trash2, Edit2, Check, X, Tag, Layers, Coins, ChevronDown, ChevronUp, Image as ImageIcon, Sliders, CheckCircle2, AlertTriangle, Hammer, ShieldCheck, Box, UserCheck, Settings, HelpCircle, FileText, Globe } from "lucide-react";
 import { Product } from "../types";
 import { db } from "../firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
@@ -15,6 +15,9 @@ interface AdminPortalProps {
   onCategoriesChange: (cats: string[]) => void;
   orders?: any[];
   onDeleteOrder?: (orderId: string) => void;
+  customOptions?: Record<string, { label: string; values: string[] }[]>;
+  onSaveCustomOptions?: (newMap: Record<string, { label: string; values: string[] }[]>) => void;
+  onSaveSiteConfig?: (newConfig: any) => void;
 }
 
 export default function AdminPortal({ 
@@ -26,7 +29,10 @@ export default function AdminPortal({
   categories,
   onCategoriesChange,
   orders = [],
-  onDeleteOrder
+  onDeleteOrder,
+  customOptions = {},
+  onSaveCustomOptions,
+  onSaveSiteConfig
 }: AdminPortalProps) {
   // Authentication state
   const [localAuthenticated, setLocalAuthenticated] = useState(false);
@@ -65,7 +71,86 @@ export default function AdminPortal({
   const [notifMessage, setNotifMessage] = useState("");
 
   // Site dynamic configuration editing states
-  const [activeSubTab, setActiveSubTab] = useState<"catalog" | "site_config" | "categories" | "orders">("catalog");
+  const [activeSubTab, setActiveSubTab] = useState<"catalog" | "site_config" | "categories" | "orders" | "bespoke" | "custom_options">("catalog");
+  
+  // Custom Options customizer states in AdminPortal
+  const [targetCustomProductId, setTargetCustomProductId] = useState<string>("");
+  const [customOptionLabel, setCustomOptionLabel] = useState<string>("");
+  const [customOptionValuesText, setCustomOptionValuesText] = useState<string>("");
+  const [localCustomOptions, setLocalCustomOptions] = useState<Record<string, { label: string; values: string[] }[]>>({});
+  const [isSavingCustomOptions, setIsSavingCustomOptions] = useState(false);
+
+  useEffect(() => {
+    if (customOptions) {
+      setLocalCustomOptions(customOptions);
+    }
+  }, [customOptions]);
+
+  // Handle default selected target custom product ID
+  useEffect(() => {
+    if (products && products.length > 0 && !targetCustomProductId) {
+      setTargetCustomProductId(products[0].id);
+    }
+  }, [products, targetCustomProductId]);
+
+  const handleAddCustomOption = () => {
+    if (!customOptionLabel.trim()) {
+      alert("Veuillez indiquer le nom de la caractéristique (ex : Taille).");
+      return;
+    }
+    const rawValues = customOptionValuesText
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0);
+
+    // Auto-append the manual override option if not already present
+    if (!rawValues.some(v => v.includes("Saisir manuellement"))) {
+      rawValues.push("Autre (Saisir manuellement)...");
+    }
+
+    const newOption = {
+      label: customOptionLabel.trim(),
+      values: rawValues,
+    };
+
+    const targetKey = targetCustomProductId || "custom_special_atelier";
+    const currentOptions = localCustomOptions[targetKey] || [];
+
+    setLocalCustomOptions((prev) => ({
+      ...prev,
+      [targetKey]: [...currentOptions, newOption],
+    }));
+
+    setCustomOptionLabel("");
+    setCustomOptionValuesText("");
+    setNotifMessage(`Caractéristique "${newOption.label}" ajoutée au brouillon.`);
+    setTimeout(() => setNotifMessage(""), 3000);
+  };
+
+  const handleRemoveCustomOption = (prodId: string, idxToRemove: number) => {
+    const currentOptions = localCustomOptions[prodId] || [];
+    const updated = currentOptions.filter((_, idx) => idx !== idxToRemove);
+    setLocalCustomOptions((prev) => ({
+      ...prev,
+      [prodId]: updated,
+    }));
+  };
+
+  const handleSaveProductCustomOptions = async () => {
+    if (!onSaveCustomOptions) return;
+    try {
+      setIsSavingCustomOptions(true);
+      await onSaveCustomOptions(localCustomOptions);
+      setNotifMessage("Finitons et options de personnalisation sauvegardées avec succès !");
+      setTimeout(() => setNotifMessage(""), 4000);
+    } catch (err) {
+      console.error("Failed to save custom product options in Firestore:", err);
+      alert("Erreur lors de l'enregistrement des options en base.");
+    } finally {
+      setIsSavingCustomOptions(false);
+    }
+  };
+
   const [expandedOrders, setExpandedOrders] = useState<Record<string, boolean>>({});
   const [footerAbout, setFooterAbout] = useState("");
   const [footerContact, setFooterContact] = useState("");
@@ -81,6 +166,21 @@ export default function AdminPortal({
 
   // New Category creator state
   const [newCategoryName, setNewCategoryName] = useState("");
+
+  // Local image upload dragging state
+  const [imageDragging, setImageDragging] = useState(false);
+
+  // Saving and deleting spinner states
+  const [isSavingProduct, setIsSavingProduct] = useState(false);
+  const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
+  const [isSavingCategory, setIsSavingCategory] = useState(false);
+  const [deletingCategory, setDeletingCategory] = useState<string | null>(null);
+  const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  const [editingCategoryValue, setEditingCategoryValue] = useState<string>("");
+  const [isSavingConfigs, setIsSavingConfigs] = useState(false);
+  const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
+  const [confirmDeleteCat, setConfirmDeleteCat] = useState<string | null>(null);
+  const [confirmDeleteOrderId, setConfirmDeleteOrderId] = useState<string | null>(null);
 
   // Auto-init active category to the first available category if none is set
   useEffect(() => {
@@ -175,69 +275,127 @@ export default function AdminPortal({
     setFeaturesList(featuresList.filter((_, i) => i !== idx));
   };
 
+  // Local image handlers
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        alert("La taille de l'image ne doit pas dépasser 2 Mo pour un stockage optimal.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === "string") {
+          setImage(reader.result);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setImageDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setImageDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setImageDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      if (!file.type.startsWith("image/")) {
+        alert("Seuls les fichiers d'image sont acceptés.");
+        return;
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        alert("La taille de l'image ne doit pas dépasser 2 Mo pour un stockage optimal.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === "string") {
+          setImage(reader.result);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   // Submit and create product
-  const handleCreateProduct = (e: React.FormEvent) => {
+  const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !price || !stock) {
       alert("Veuillez remplir au moins le nom, le tarif et le stock !");
       return;
     }
 
-    const priceInCFA = parseFloat(price);
-    const priceNum = isNaN(priceInCFA) ? 100000 / 655.957 : priceInCFA / 655.957;
-    const stockNum = parseInt(stock);
+    try {
+      setIsSavingProduct(true);
+      const priceInCFA = parseFloat(price);
+      const priceNum = isNaN(priceInCFA) ? 100000 / 655.957 : priceInCFA / 655.957;
+      const stockNum = parseInt(stock);
 
-    const defaultImages = [
-      "https://images.unsplash.com/photo-1616486338812-3dadae4b4ace?auto=format&fit=crop&w=600&q=80",
-      "https://images.unsplash.com/photo-1593642632823-8f785ba67e45?auto=format&fit=crop&w=600&q=80",
-      "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=600&q=80"
-    ];
+      const defaultImages = [
+        "https://images.unsplash.com/photo-1616486338812-3dadae4b4ace?auto=format&fit=crop&w=600&q=80",
+        "https://images.unsplash.com/photo-1593642632823-8f785ba67e45?auto=format&fit=crop&w=600&q=80",
+        "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=600&q=80"
+      ];
 
-    const finalImage = image.trim() || defaultImages[Math.floor(Math.random() * defaultImages.length)];
+      const finalImage = image.trim() || defaultImages[Math.floor(Math.random() * defaultImages.length)];
 
-    const newProduct: Product = {
-      id: `nexus-${Date.now()}`,
-      name: name.trim(),
-      tagline: tagline.trim() || "Une création nexus. élégante.",
-      description: description.trim() || "Aucune description fournie.",
-      price: priceNum,
-      image: finalImage,
-      category: category,
-      colors: colorsList.length > 0 ? colorsList : [{ name: "Noir mat", hex: "#000000" }],
-      variantsLabel: variantsLabel.trim() || undefined,
-      variants: variantsList.length > 0 ? variantsList : undefined,
-      features: featuresList.length > 0 ? featuresList : ["Matériaux recyclés eco-conçus", "Emballage carton bio-dégradable"],
-      stock: isNaN(stockNum) ? 10 : stockNum
-    };
+      const newProduct: Product = {
+        id: `nexus-${Date.now()}`,
+        name: name.trim(),
+        tagline: tagline.trim() || "Une création nexus. élégante.",
+        description: description.trim() || "Aucune description fournie.",
+        price: priceNum,
+        image: finalImage,
+        category: category,
+        colors: colorsList.length > 0 ? colorsList : [{ name: "Noir mat", hex: "#000000" }],
+        variantsLabel: variantsLabel.trim() || undefined,
+        variants: variantsList.length > 0 ? variantsList : undefined,
+        features: featuresList.length > 0 ? featuresList : ["Matériaux recyclés eco-conçus", "Emballage carton bio-dégradable"],
+        stock: isNaN(stockNum) ? 10 : stockNum
+      };
 
-    onAddProduct(newProduct);
+      await onAddProduct(newProduct);
 
-    // Reset fields
-    setName("");
-    setTagline("");
-    setDescription("");
-    setPrice("");
-    setStock("");
-    setImage("");
-    setColorsList([
-      { name: "Vert Signature", hex: "#2d4a22" },
-      { name: "Orange Terre Cuite", hex: "#c2410c" }
-    ]);
-    setVariantsList(["Standard Edition"]);
-    setFeaturesList([
-      "Conception artisanale nexus. exclusive",
-      "Garantie constructeur prolongée incluse"
-    ]);
+      // Reset fields
+      setName("");
+      setTagline("");
+      setDescription("");
+      setPrice("");
+      setStock("");
+      setImage("");
+      setColorsList([
+        { name: "Vert Signature", hex: "#2d4a22" },
+        { name: "Orange Terre Cuite", hex: "#c2410c" }
+      ]);
+      setVariantsList(["Standard Edition"]);
+      setFeaturesList([
+        "Conception artisanale nexus. exclusive",
+        "Garantie constructeur prolongée incluse"
+      ]);
 
-    setNotifMessage("Félicitations ! Le produit de luxe a bien été ajouté au catalogue en ligne.");
-    setTimeout(() => setNotifMessage(""), 5000);
+      setNotifMessage("Félicitations ! Le produit de luxe a bien été ajouté au catalogue en ligne.");
+      setTimeout(() => setNotifMessage(""), 5000);
+    } catch (err) {
+      console.error("Save product failed:", err);
+    } finally {
+      setIsSavingProduct(false);
+    }
   };
 
   const handleSaveConfigs = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      setIsSavingConfigs(true);
       const configRef = doc(db, "site_config", "general");
-      await setDoc(configRef, {
+      const newConfig = {
         footerAbout: footerAbout.trim(),
         footerContact: footerContact.trim(),
         footerWarranty: footerWarranty.trim(),
@@ -245,13 +403,20 @@ export default function AdminPortal({
         heroSub: heroSub.trim(),
         heroDesc: heroDesc.trim(),
         faqs: faqs
-      }, { merge: true });
+      };
+      await setDoc(configRef, newConfig, { merge: true });
+
+      if (onSaveSiteConfig) {
+        onSaveSiteConfig(newConfig);
+      }
 
       setNotifMessage("Configuration du site enregistrée avec succès sur le Cloud Firestore !");
       setTimeout(() => setNotifMessage(""), 5000);
     } catch (err) {
       console.error("Save config failure:", err);
       alert("Le paramétrage n'a pas pu être enregistré. Activez Firebase dans le panneau de ressources.");
+    } finally {
+      setIsSavingConfigs(false);
     }
   };
 
@@ -266,7 +431,7 @@ export default function AdminPortal({
     setFaqs(faqs.filter((_, i) => i !== index));
   };
 
-  const handleCreateCategory = (e: React.FormEvent) => {
+  const handleCreateCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanCat = newCategoryName.trim();
     if (!cleanCat) return;
@@ -274,32 +439,86 @@ export default function AdminPortal({
       alert("Cette catégorie de meuble existe déjà !");
       return;
     }
-    const updated = [...categories, cleanCat];
-    onCategoriesChange(updated);
-    setNewCategoryName("");
-    setNotifMessage(`La catégorie "${cleanCat}" a été ajoutée avec succès !`);
-    setTimeout(() => setNotifMessage(""), 4000);
+    try {
+      setIsSavingCategory(true);
+      const updated = [...categories, cleanCat];
+      await onCategoriesChange(updated);
+      setNewCategoryName("");
+      setNotifMessage(`La catégorie "${cleanCat}" a été ajoutée avec succès !`);
+      setTimeout(() => setNotifMessage(""), 4000);
+    } catch (err) {
+      console.error("Failed to add category:", err);
+    } finally {
+      setIsSavingCategory(false);
+    }
   };
 
-  const handleDeleteCategory = (catToDelete: string) => {
+  const handleDeleteCategory = async (catToDelete: string, force = false) => {
     if (categories.length <= 1) {
       alert("Impossible de supprimer la dernière catégorie du site !");
       return;
     }
     const linkedCount = products.filter(p => p.category === catToDelete).length;
-    if (linkedCount > 0) {
+    if (linkedCount > 0 && !force) {
       if (!window.confirm(`Attention ! ${linkedCount} produit(s) sont liés à la catégorie "${catToDelete}". Souhaitez-vous quand même la supprimer ?`)) {
         return;
       }
-    } else {
+    } else if (!force) {
       if (!window.confirm(`Confirmez-vous la suppression de la catégorie "${catToDelete}" ?`)) {
         return;
       }
     }
-    const updated = categories.filter(c => c !== catToDelete);
-    onCategoriesChange(updated);
-    setNotifMessage(`La catégorie "${catToDelete}" a été retirée.`);
-    setTimeout(() => setNotifMessage(""), 4000);
+    try {
+      setDeletingCategory(catToDelete);
+      const updated = categories.filter(c => c !== catToDelete);
+      await onCategoriesChange(updated);
+      setNotifMessage(`La catégorie "${catToDelete}" a été retirée.`);
+      setTimeout(() => setNotifMessage(""), 4000);
+    } catch (err) {
+      console.error("Failed to delete category:", err);
+    } finally {
+      setDeletingCategory(null);
+    }
+  };
+
+  const handleUpdateCategory = async (oldCatName: string, newCatName: string) => {
+    const cleanNew = newCatName.trim();
+    if (!cleanNew) {
+      alert("Le nom de la catégorie ne peut pas être vide !");
+      return;
+    }
+    if (cleanNew.toLowerCase() === oldCatName.toLowerCase()) {
+      setEditingCategory(null);
+      return;
+    }
+    if (categories.some(c => c.toLowerCase() === cleanNew.toLowerCase())) {
+      alert("Cette catégorie de meuble existe déjà !");
+      return;
+    }
+
+    try {
+      setIsSavingCategory(true);
+      
+      // Update global categories list doc on Firestore
+      const updatedCategories = categories.map(c => c === oldCatName ? cleanNew : c);
+      await onCategoriesChange(updatedCategories);
+
+      // Batch update the category field of all products belonging to this old category
+      const affectedProducts = products.filter(p => p.category === oldCatName);
+      for (const prod of affectedProducts) {
+        const prodRef = doc(db, "products", prod.id);
+        await setDoc(prodRef, { ...prod, category: cleanNew });
+      }
+
+      setNotifMessage(`La catégorie "${oldCatName}" a été renommée en "${cleanNew}" avec succès !`);
+      setTimeout(() => setNotifMessage(""), 4000);
+      setEditingCategory(null);
+    } catch (err) {
+      console.error("Failed to update category:", err);
+      alert("Erreur lors de la modification de la catégorie : " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsSavingCategory(false);
+    }
   };
 
   // Auth gate check
@@ -356,6 +575,10 @@ export default function AdminPortal({
   const totalStock = products.reduce((acc, p) => acc + (p.stock || 0), 0);
   const avgPrice = Math.round(products.reduce((acc, p) => acc + p.price, 0) / (products.length || 1));
 
+  // Separate standard purchases from custom handcrafted requests
+  const regularOrders = orders.filter((o : any) => o.isCustomSpecial !== true);
+  const bespokeOrders = orders.filter((o : any) => o.isCustomSpecial === true);
+
   return (
     <div className="max-w-6xl mx-auto my-6 space-y-6">
       
@@ -400,7 +623,7 @@ export default function AdminPortal({
       )}
 
       {/* Admin Panel Multi Sub Navigation Tabs */}
-      <div className="flex border-b border-slate-100 justify-start space-x-5 select-none font-sans font-bold text-xs tracking-tight">
+      <div className="flex flex-wrap border-b border-slate-100 justify-start gap-x-5 gap-y-2 select-none font-sans font-bold text-xs tracking-tight">
         <button
           onClick={() => setActiveSubTab("catalog")}
           className={`pb-3 border-b-2 transition-all cursor-pointer ${activeSubTab === "catalog" ? "border-[#2d4a22] text-[#2d4a22]" : "border-transparent text-slate-400 hover:text-slate-600"}`}
@@ -411,13 +634,25 @@ export default function AdminPortal({
           onClick={() => setActiveSubTab("categories")}
           className={`pb-3 border-b-2 transition-all cursor-pointer ${activeSubTab === "categories" ? "border-[#2d4a22] text-[#2d4a22]" : "border-transparent text-slate-400 hover:text-slate-600"}`}
         >
-          Catégories de Meubles ({categories.length})
+          Catégories ({categories.length})
         </button>
         <button
           onClick={() => setActiveSubTab("orders")}
           className={`pb-3 border-b-2 transition-all cursor-pointer ${activeSubTab === "orders" ? "border-[#2d4a22] text-[#2d4a22]" : "border-transparent text-slate-400 hover:text-slate-600"}`}
         >
-          Livraisons Clients ({orders.length})
+          Commandes Clients ({regularOrders.length})
+        </button>
+        <button
+          onClick={() => setActiveSubTab("bespoke")}
+          className={`pb-3 border-b-2 transition-all cursor-pointer ${activeSubTab === "bespoke" ? "border-[#2d4a22] text-[#2d4a22]" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+        >
+          Demandes Sur-Mesure ({bespokeOrders.length})
+        </button>
+        <button
+          onClick={() => setActiveSubTab("custom_options")}
+          className={`pb-3 border-b-2 transition-all cursor-pointer ${activeSubTab === "custom_options" ? "border-[#2d4a22] text-[#2d4a22]" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+        >
+          Finitons & Options Produit
         </button>
         <button
           onClick={() => setActiveSubTab("site_config")}
@@ -522,6 +757,66 @@ export default function AdminPortal({
                   onChange={(e) => setImage(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-100 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
                 />
+              </div>
+
+              {/* Local Image Drag & Drop Frame */}
+              <div className="space-y-1.5 md:col-span-2">
+                <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Ou téléverser une photo locale</label>
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={`border-2 border-dashed rounded-2xl p-5 text-center transition-all cursor-pointer flex flex-col items-center justify-center relative min-h-[140px] ${
+                    imageDragging
+                      ? "border-[#2d4a22] bg-[#2d4a22]/5"
+                      : image
+                      ? "border-slate-300 bg-slate-50/55"
+                      : "border-slate-200 bg-slate-50/20 hover:bg-slate-50/80 hover:border-[#2d4a22]"
+                  }`}
+                >
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    id="local-image-file-picker"
+                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                  />
+                  
+                  {image ? (
+                    <div className="flex flex-col items-center space-y-2 pointer-events-none">
+                      <div className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-200 shadow-2xs">
+                        <img 
+                          src={image} 
+                          alt="Prévisualisation" 
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <p className="text-[10px] font-semibold text-[#2d4a22] font-mono">Image chargée avec succès (Base64)</p>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          setImage("");
+                        }}
+                        className="pointer-events-auto bg-rose-50 hover:bg-rose-500 text-rose-600 hover:text-white border border-rose-100 rounded-lg px-2.5 py-1 text-[9px] font-mono uppercase font-black transition-all"
+                      >
+                        Retirer la photo
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 text-slate-500 pointer-events-none">
+                      <div className="mx-auto w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-[#2d4a22]">
+                        <ImageIcon className="w-5 h-5" />
+                      </div>
+                      <div className="text-xs">
+                        <span className="font-bold text-[#2d4a22]">Glissez-déposez ici</span> ou cliquez pour parcourir vos fichiers
+                      </div>
+                      <p className="text-[9px] text-slate-400 font-medium">Format recommandé: JPG, PNG ou WebP. Limite 2 Mo.</p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -686,15 +981,25 @@ export default function AdminPortal({
 
             <button
               type="submit"
-              className="w-full py-4.5 bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-black text-xs uppercase tracking-widest rounded-2xl transition-all shadow-md cursor-pointer flex items-center justify-center gap-2"
+              disabled={isSavingProduct}
+              className="w-full py-4.5 bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-black text-xs uppercase tracking-widest rounded-2xl transition-all shadow-md cursor-pointer flex items-center justify-center gap-2 disabled:opacity-75 disabled:cursor-not-allowed"
             >
-              <CheckCircle2 className="w-4 h-4" />
-              Exposer et publier dans l'Atelier en ligne
+              {isSavingProduct ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <span>Publication en cours...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Exposer et publier dans l'Atelier en ligne</span>
+                </>
+              )}
             </button>
           </form>
 
           {/* List of current store products */}
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-6 text-left sleek-shadow-md lg:col-span-1">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-101 dark:border-slate-800 p-6 md:p-8 space-y-6 text-left sleek-shadow-md lg:col-span-1">
             <div className="border-b border-slate-100 dark:border-slate-800 pb-3 block">
               <h3 className="font-sans font-bold text-slate-800 dark:text-white text-base tracking-tight flex items-center gap-2">
                 <Sliders className="w-5 h-5 text-[#2d4a22]" />
@@ -732,11 +1037,27 @@ export default function AdminPortal({
 
                   <button
                     type="button"
-                    onClick={() => onDeleteProduct(p.id)}
-                    className="p-2.5 bg-rose-50 hover:bg-rose-500 text-rose-500 hover:text-white rounded-xl transition-all opacity-100 md:opacity-0 group-hover:opacity-100 shrink-0"
+                    disabled={deletingProductId === p.id}
+                    onClick={async () => {
+                      if (window.confirm(`Confirmez-vous la suppression définitive du produit "${p.name}" ?`)) {
+                        try {
+                          setDeletingProductId(p.id);
+                          await onDeleteProduct(p.id);
+                        } catch (err) {
+                          console.error("Deletion failed:", err);
+                        } finally {
+                          setDeletingProductId(null);
+                        }
+                      }
+                    }}
+                    className="p-2.5 bg-rose-50 hover:bg-rose-500 text-rose-500 hover:text-white dark:bg-rose-950/20 rounded-xl transition-all shrink-0 flex items-center justify-center min-w-[40px] h-[40px] cursor-pointer"
                     title="Supprimer définitivement"
                   >
-                    <Trash2 className="w-4 h-4" />
+                    {deletingProductId === p.id ? (
+                      <div className="w-4 h-4 border-2 border-rose-500 border-t-transparent rounded-full animate-spin"></div>
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
                   </button>
                 </div>
               ))}
@@ -774,9 +1095,17 @@ export default function AdminPortal({
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-sm cursor-pointer"
+              disabled={isSavingCategory}
+              className="w-full py-3.5 bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-sm cursor-pointer flex items-center justify-center gap-2 disabled:opacity-75"
             >
-              Enregistrer la catégorie de meuble
+              {isSavingCategory ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <span>Enregistrement en cours...</span>
+                </>
+              ) : (
+                <span>Enregistrer la catégorie de meuble</span>
+              )}
             </button>
           </form>
 
@@ -792,24 +1121,127 @@ export default function AdminPortal({
             <div className="space-y-2">
               {categories.map((cat) => {
                 const associatedCount = products.filter(p => p.category === cat).length;
+                const isEditing = editingCategory === cat;
                 return (
                   <div 
                     key={cat}
-                    className="flex items-center justify-between p-3 rounded-xl bg-slate-50/50 border border-slate-101 hover:bg-white transition-all group"
+                    className="flex items-center justify-between p-3 rounded-xl bg-slate-50/50 dark:bg-slate-900 border border-slate-101 dark:border-slate-800 hover:bg-white dark:hover:bg-slate-850/50 transition-all group gap-3"
                   >
-                    <div>
-                      <span className="text-xs font-bold text-slate-700">{cat}</span>
-                      <span className="text-[9px] font-mono font-bold text-slate-400 block">{associatedCount} meuble(s) associés</span>
+                    <div className="flex-1 min-w-0">
+                      {isEditing ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleUpdateCategory(cat, editingCategoryValue);
+                          }}
+                          className="flex items-center gap-2 w-full"
+                        >
+                          <input
+                            type="text"
+                            value={editingCategoryValue}
+                            onChange={(e) => setEditingCategoryValue(e.target.value)}
+                            className="text-xs px-2.5 py-1.5 border border-slate-300 dark:border-slate-750 rounded-lg w-full font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 focus:outline-none focus:ring-1 focus:ring-[#2d4a22]"
+                            placeholder="Nom de la catégorie"
+                            autoFocus
+                            disabled={isSavingCategory}
+                          />
+                        </form>
+                      ) : (
+                        <>
+                          <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block truncate">{cat}</span>
+                          <span className="text-[9px] font-mono font-bold text-slate-400 block">{associatedCount} meuble(s) associés</span>
+                        </>
+                      )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteCategory(cat)}
-                      className="p-2 bg-rose-50 hover:bg-rose-500 text-rose-500 hover:text-white rounded-lg transition-colors opacity-100 md:opacity-0 group-hover:opacity-100"
-                      title="Supprimer la catégorie"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {isEditing ? (
+                        <>
+                          <button
+                            type="button"
+                            disabled={isSavingCategory}
+                            onClick={() => handleUpdateCategory(cat, editingCategoryValue)}
+                            className="p-2 bg-emerald-50 hover:bg-[#2d4a22] text-[#2d4a22] hover:text-white dark:bg-emerald-950/20 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer disabled:opacity-50"
+                            title="Valider la modification"
+                          >
+                            {isSavingCategory ? (
+                              <div className="w-3.5 h-3.5 border-2 border-[#2d4a22] border-t-transparent rounded-full animate-spin"></div>
+                            ) : (
+                              <Check className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isSavingCategory}
+                            onClick={() => {
+                              setEditingCategory(null);
+                              setEditingCategoryValue("");
+                            }}
+                            className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 dark:bg-slate-800 dark:hover:bg-slate-750 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer"
+                            title="Annuler"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      ) : confirmDeleteCat === cat ? (
+                        <div className="flex items-center gap-1.5 animate-fadeIn p-1 bg-rose-50/50 dark:bg-rose-950/10 rounded-xl border border-rose-100 dark:border-rose-900/30">
+                          <span className="text-[10px] font-bold text-rose-650 dark:text-rose-400 font-mono px-2 block select-none">
+                            {associatedCount > 0 ? `Effacer (${associatedCount} liés) ?` : "Vraiment supprimer ?"}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={deletingCategory === cat}
+                            onClick={async () => {
+                              try {
+                                await handleDeleteCategory(cat, true);
+                              } finally {
+                                setConfirmDeleteCat(null);
+                              }
+                            }}
+                            className="p-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer shadow-sm"
+                            title="Confirmer la suppression"
+                          >
+                            {deletingCategory === cat ? (
+                              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                            ) : (
+                              <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteCat(null)}
+                            className="p-1.5 bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer"
+                            title="Annuler"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            disabled={deletingCategory !== null}
+                            onClick={() => {
+                              setEditingCategory(cat);
+                              setEditingCategoryValue(cat);
+                            }}
+                            className="p-2 bg-slate-100/80 hover:bg-[#2d4a22] text-slate-600 hover:text-white dark:bg-slate-800 dark:hover:bg-[#2d4a22] dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer shadow-sm hover:shadow"
+                            title="Modifier le nom"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deletingCategory === cat}
+                            onClick={() => setConfirmDeleteCat(cat)}
+                            className="p-2 bg-rose-50 hover:bg-rose-600 text-rose-500 hover:text-white dark:bg-rose-950/20 dark:hover:bg-rose-900 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer shadow-sm hover:shadow"
+                            title="Supprimer la catégorie"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -962,28 +1394,38 @@ export default function AdminPortal({
           <div className="pt-5 border-t border-slate-105 dark:border-slate-800 flex justify-end">
             <button
               type="submit"
-              className="py-3 px-8 bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all cursor-pointer shadow-sm flex items-center gap-2"
+              disabled={isSavingConfigs}
+              className="py-3 px-8 bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all cursor-pointer shadow-sm flex items-center gap-2 disabled:opacity-75"
             >
-              <CheckCircle2 className="w-4 h-4" />
-              Enregistrer la Configuration du Site
+              {isSavingConfigs ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <span>Enregistrement en cours...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Enregistrer la Configuration du Site</span>
+                </>
+              )}
             </button>
           </div>
         </form>
-      ) : (
-        /* CUSTOM CLIENT ORDERS LIST FOR ADMIN PORTAL */
+      ) : activeSubTab === "orders" ? (
+        /* CUSTOM CLIENT STANDARD PURCHASE ORDERS LIST */
         <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-6 sleek-shadow-md text-left animate-fadeIn">
           <div className="border-b border-slate-100 dark:border-slate-800 pb-3 block">
             <h3 className="font-sans font-bold text-slate-800 dark:text-white text-base tracking-tight flex items-center gap-2">
               <UserCheck className="w-5 h-5 text-[#2d4a22]" />
-              Suivi et Livraison des Commandes Clients
+              Suivi et Livraison du Catalogue Standard ({regularOrders.length})
             </h3>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-normal">
-              Visualisez le détail de chaque commande d'achat client, le numéro de téléphone et l'email direct saisis par l'utilisateur pour le livrer en mains propres ou par transporteur. Cliquez sur une commande pour afficher tous ses détails.
+              Visualisez le détail de chaque commande de meubles achetés en catalogue standard. Contactez le client directement par téléphone ou mail. Cliquez sur une ligne pour l'étendre.
             </p>
           </div>
 
           <div className="space-y-4">
-            {orders.map((ord: any) => {
+            {regularOrders.map((ord: any) => {
               const isExpanded = !!expandedOrders[ord.id];
               return (
                 <div 
@@ -1019,21 +1461,66 @@ export default function AdminPortal({
                       </div>
 
                       {/* Suppression de commande autorisée */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (window.confirm(`Supprimer définitivement la commande "${ord.id}" ?`)) {
-                            if (onDeleteOrder) {
-                              onDeleteOrder(ord.id);
-                            }
-                          }
-                        }}
-                        className="p-2.5 bg-rose-50 hover:bg-rose-500 text-rose-500 hover:text-white dark:bg-rose-950/20 rounded-xl transition-all cursor-pointer"
-                        title="Supprimer la commande"
-                      >
-                        <Trash2 className="w-4 h-4 stroke-[2.5]" />
-                      </button>
+                      {confirmDeleteOrderId === ord.id ? (
+                        <div 
+                          className="flex items-center gap-1.5 animate-fadeIn p-1 bg-rose-50/50 dark:bg-rose-950/10 rounded-xl border border-rose-100 dark:border-rose-900/30"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <span className="text-[10px] font-bold text-rose-650 dark:text-rose-400 font-mono px-2 block select-none">
+                            Supprimer ?
+                          </span>
+                          <button
+                            type="button"
+                            disabled={deletingOrderId === ord.id}
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (onDeleteOrder) {
+                                try {
+                                  setDeletingOrderId(ord.id);
+                                  await onDeleteOrder(ord.id);
+                                } catch (err) {
+                                  console.error("Order deletion failed:", err);
+                                } finally {
+                                  setDeletingOrderId(null);
+                                  setConfirmDeleteOrderId(null);
+                                }
+                              }
+                            }}
+                            className="p-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer shadow-sm"
+                            title="Confirmer la suppression"
+                          >
+                            {deletingOrderId === ord.id ? (
+                              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                            ) : (
+                              <Check className="w-4 h-4 stroke-[2.5]" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmDeleteOrderId(null);
+                            }}
+                            className="p-1.5 bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer"
+                            title="Annuler"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={deletingOrderId !== null}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDeleteOrderId(ord.id);
+                          }}
+                          className="p-2.5 bg-rose-50 hover:bg-rose-600 text-rose-500 hover:text-white dark:bg-rose-950/20 dark:hover:bg-rose-900 rounded-xl transition-all cursor-pointer flex items-center justify-center min-w-[40px] h-[40px] shadow-sm hover:shadow"
+                          title="Supprimer la commande"
+                        >
+                          <Trash2 className="w-4 h-4 stroke-[2]" />
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -1141,16 +1628,414 @@ export default function AdminPortal({
               );
             })}
 
-            {orders.length === 0 && (
+            {regularOrders.length === 0 && (
               <div className="text-center py-12 space-y-3 border border-dashed border-slate-200 dark:border-slate-800 rounded-3xl">
                 <Box className="w-8 h-8 text-slate-300 mx-auto" />
-                <p className="text-xs font-bold text-slate-500 dark:text-slate-400 italic">Aucune commande d'achat reçue pour le moment.</p>
-                <p className="text-[10px] text-slate-400">Toutes les nouvelles commandes d'achat s'afficheront en temps réel dans cette zone.</p>
+                <p className="text-xs font-bold text-slate-500 dark:text-slate-400 italic">Aucune commande catalogue pour l'instant.</p>
+                <p className="text-[10px] text-slate-400">Toutes les nouvelles commandes d'achat standards s'afficheront ici.</p>
               </div>
             )}
           </div>
         </div>
-      )}
+      ) : activeSubTab === "bespoke" ? (
+        /* SPECIAL BESPOKE CUSTOM PIECES REQUESTS OUTSIDE OF COMMON STOCK */
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-6 sleek-shadow-md text-left animate-fadeIn">
+          <div className="border-b border-rose-100 dark:border-amber-900/30 pb-3 block">
+            <h3 className="font-sans font-bold text-amber-700 dark:text-amber-450 text-base tracking-tight flex items-center gap-2">
+              <Hammer className="w-5 h-5 text-amber-600 animate-pulse" />
+              Section Spéciale : Demandes Artisanales Sur-Mesure ({bespokeOrders.length})
+            </h3>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-normal">
+              Retrouvez ici toutes les propositions uniques de créations d'Atelier entrées spécifiquement par vos clients sur-mesure (hors-catalogue standard). Gérer chaque projet sur commande spéciale et accédez directement aux options saisies manuellement pour fixer le devis final.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            {bespokeOrders.map((ord: any) => {
+              const isExpanded = !!expandedOrders[ord.id];
+              return (
+                <div 
+                  key={ord.id} 
+                  className="bg-amber-500/5 dark:bg-amber-500/5 border border-amber-500/15 dark:border-amber-500/10 rounded-2xl p-4 md:p-5 space-y-4 shadow-3xs transition-all duration-300 animate-slideUp"
+                >
+                  <div 
+                    onClick={() => setExpandedOrders(prev => ({ ...prev, [ord.id]: !prev[ord.id] }))}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1 cursor-pointer select-none group/header"
+                  >
+                    <div className="flex items-center gap-3 font-sans">
+                      <div className="p-2.5 bg-amber-500/10 dark:bg-amber-500/25 rounded-xl text-amber-600 transition-colors group-hover/header:bg-[#2d4a22]/10 group-hover/header:text-[#2d4a22]">
+                        {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                      </div>
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[9px] uppercase font-mono tracking-widest bg-amber-600 text-white px-2 py-0.5 rounded-full font-bold">COMMANDE COMMODITÉ ATELIER</span>
+                          <span className="text-[10px] text-slate-500">({ord.fullName})</span>
+                        </div>
+                        <span className="text-xs font-mono font-black text-slate-800 dark:text-slate-200">CODE DEMANDE: {ord.id}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between sm:justify-end gap-4 min-w-[200px]">
+                      <div className="text-left sm:text-right font-sans">
+                        <span className="text-base font-mono font-bold text-amber-700 dark:text-amber-400 block animate-pulse">
+                          {ord.total ? `${ord.total.toLocaleString()} F CFA` : "Devis en attente"}
+                        </span>
+                        <span className="text-[9px] text-slate-400 font-mono block">
+                          {ord.createdAt ? new Date(ord.createdAt.seconds ? ord.createdAt.seconds * 1000 : ord.createdAt).toLocaleString("fr-FR") : "Récente"}
+                        </span>
+                      </div>
+
+                      {confirmDeleteOrderId === ord.id ? (
+                        <div 
+                          className="flex items-center gap-1.5 animate-fadeIn p-1 bg-rose-50/50 dark:bg-rose-950/10 rounded-xl border border-rose-100 dark:border-rose-900/30"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <span className="text-[10px] font-bold text-rose-650 dark:text-rose-400 font-mono px-2 block select-none">
+                            Supprimer ?
+                          </span>
+                          <button
+                            type="button"
+                            disabled={deletingOrderId === ord.id}
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (onDeleteOrder) {
+                                try {
+                                  setDeletingOrderId(ord.id);
+                                  await onDeleteOrder(ord.id);
+                                } catch (err) {
+                                  console.error("Special order removal failed:", err);
+                                } finally {
+                                  setDeletingOrderId(null);
+                                  setConfirmDeleteOrderId(null);
+                                }
+                              }
+                            }}
+                            className="p-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer shadow-sm"
+                            title="Confirmer la suppression"
+                          >
+                            {deletingOrderId === ord.id ? (
+                              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                            ) : (
+                              <Check className="w-4 h-4 stroke-[2.5]" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmDeleteOrderId(null);
+                            }}
+                            className="p-1.5 bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer"
+                            title="Annuler"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={deletingOrderId !== null}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDeleteOrderId(ord.id);
+                          }}
+                          className="p-2.5 bg-rose-50 hover:bg-rose-600 text-rose-500 hover:text-white dark:bg-rose-950/20 dark:hover:bg-rose-900 rounded-xl transition-all cursor-pointer flex items-center justify-center min-w-[40px] h-[40px] shadow-sm hover:shadow"
+                          title="Supprimer la demande"
+                        >
+                          <Trash2 className="w-4 h-4 stroke-[2]" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs pt-4 border-t border-amber-200/30 dark:border-slate-800 animate-fadeIn">
+                      <div className="bg-white dark:bg-slate-900/60 p-4 rounded-xl border border-amber-500/15 space-y-2.5 text-left font-sans">
+                        <h4 className="text-[12px] uppercase font-mono tracking-wider font-extrabold text-[#2d4a22] border-b border-slate-50 dark:border-slate-800/40 pb-1.5 flex items-center gap-1.5">
+                          <UserCheck className="w-3.5 h-3.5 text-amber-505" />
+                          Coordonnées Directes de Contact
+                        </h4>
+                        <div className="space-y-1.5">
+                          <p className="text-slate-800 dark:text-slate-200">
+                            <span className="font-bold text-slate-450 mr-2 uppercase text-[9px] font-mono">Nom Complet:</span> 
+                            {ord.fullName}
+                          </p>
+                          <p className="text-slate-850 dark:text-slate-200 bg-emerald-500/5 p-2 rounded-lg block font-semibold border border-emerald-500/10">
+                            <span className="font-bold text-emerald-600 mr-2 uppercase text-[9px] font-mono">TÉLÈPHONE DIRECT :</span>
+                            <span className="font-mono text-slate-900 dark:text-white text-sm font-black">{ord.phone}</span>
+                          </p>
+                          <p className="text-slate-800 dark:text-slate-200">
+                            <span className="font-bold text-slate-450 mr-2 uppercase text-[9px] font-mono">Email :</span>
+                            <span className="font-mono underline text-slate-900 dark:text-white">{ord.email}</span>
+                          </p>
+                          <p className="text-slate-800 dark:text-slate-200">
+                            <span className="font-bold text-slate-450 mr-2 uppercase text-[9px] font-mono">Adresse Souhaitée:</span>
+                            {ord.address}
+                          </p>
+                          <p className="text-slate-850 dark:text-slate-200">
+                            <span className="font-bold text-slate-450 mr-2 uppercase text-[9px] font-mono">Ville:</span>
+                            {ord.city}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="bg-white dark:bg-slate-900/60 p-4 rounded-xl border border-amber-500/15 space-y-3 text-left">
+                        <h4 className="text-[12px] uppercase font-mono tracking-wider font-extrabold text-[#2d4a22] border-b border-slate-50 dark:border-slate-800/40 pb-1.5 flex items-center gap-1.5">
+                          <Hammer className="w-3.5 h-3.5 text-[#2d4a22]" />
+                          Descriptif Technique Projet Sur-Mesure
+                        </h4>
+                        <div className="space-y-2">
+                          {ord.items?.map((it: any, index: number) => (
+                            <div key={index} className="space-y-2 border-b border-slate-50 dark:border-slate-800/40 pb-2 text-[11px]">
+                              <div>
+                                <span className="font-extrabold text-[#2d4a22] dark:text-emerald-450 text-sm block">
+                                  {it.name}
+                                </span>
+                                {it.selectedColor?.name && (
+                                  <p className="text-[10px] text-slate-600 dark:text-slate-300 mt-1 font-semibold">
+                                    • Teinte de base : {it.selectedColor.name} 
+                                    <span className="w-2.5 h-2.5 rounded-full inline-block border border-black/10 align-middle ml-1.5" style={{ backgroundColor: it.selectedColor.hex }}></span>
+                                  </p>
+                                )}
+                              </div>
+                              
+                              <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 space-y-1 text-left">
+                                <span className="text-[9px] font-mono font-bold text-slate-400 block uppercase">Options & Caractéristiques souhaitées :</span>
+                                <p className="text-slate-700 dark:text-slate-200 font-sans leading-relaxed break-words font-black">
+                                  {it.selectedVariant || "Spécifications par défaut."}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {isExpanded && (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-3 border-t border-dashed border-amber-200/30 dark:border-slate-800 gap-3">
+                      <span className="text-[10px] font-mono font-extrabold text-slate-400 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                        Identifiant d'origine: {ord.userId}
+                      </span>
+                      
+                      <div className="flex flex-wrap gap-2">
+                        {ord.phone && (
+                          <a 
+                            href={`https://wa.me/${ord.phone.replace(/[^0-9]/g, "")}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-[10px] uppercase font-black tracking-wider transition-all select-none"
+                          >
+                            Ouvrir dans WhatsApp
+                          </a>
+                        )}
+                        {ord.phone && (
+                          <a 
+                            href={`tel:${ord.phone}`}
+                            className="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2 rounded-xl text-[10px] uppercase font-black tracking-wider transition-all"
+                          >
+                            Appeler l'Acheteur
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {bespokeOrders.length === 0 && (
+              <div className="text-center py-12 space-y-3 border border-dashed border-amber-200 rounded-3xl">
+                <Box className="w-8 h-8 text-amber-500 mx-auto" />
+                <p className="text-xs font-bold text-slate-500 italic">Aucune commande spéciale ou projet sur-mesure d'Atelier reçu pour l'instant.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : activeSubTab === "custom_options" ? (
+        /* ADVANCED CONFIGURATOR FOR DYNAMIC PRODUCT CHARACTERISTICS IN MANUFACTURE SUR MESURE */
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-101 dark:border-slate-800 p-6 md:p-8 space-y-6 sleek-shadow-md text-left animate-fadeIn">
+          <div className="border-b border-slate-100 dark:border-slate-800 pb-3 block">
+            <h3 className="font-sans font-bold text-slate-800 dark:text-white text-base tracking-tight flex items-center gap-2">
+              <Sliders className="w-5 h-5 text-[#2d4a22]" />
+              Configuration et Finitions Spécifiques de chaque Produit
+            </h3>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-normal">
+              Modifiez et rajoutez des caractéristiques sur-mesure (ex: tailles, RAM, tissus, bois) pour chacun des produits de votre boutique. Elles seront suggérées en temps réel dans la <strong>Section Manufacture Sur Mesure</strong> sur le site.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-1 bg-slate-50/70 dark:bg-slate-950 p-5 rounded-2xl border border-[#e2eae0] dark:border-slate-850 space-y-4">
+              <h4 className="text-xs font-black uppercase text-[#2d4a22] dark:text-[#a3e635] flex items-center gap-2 font-mono">
+                <Plus className="w-4 h-4" /> Ajouter une caractéristique
+              </h4>
+
+              <div className="space-y-1.5 text-left">
+                <label className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-500 block">1. Choisir le produit cible</label>
+                <select
+                  value={targetCustomProductId}
+                  onChange={(e) => setTargetCustomProductId(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 dark:text-white pointer-events-auto"
+                >
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                  <option value="custom_special_atelier" className="text-amber-600 font-bold">
+                    [CRÉATION UNIQUE LIBRE - SUR MESURE]
+                  </option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5 text-left">
+                <label className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-505 block">2. Nom de la caractéristique</label>
+                <input
+                  type="text"
+                  placeholder="ex : Taille, RAM, Type de Bois..."
+                  value={customOptionLabel}
+                  onChange={(e) => setCustomOptionLabel(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-xl px-3 py-2 text-xs outline-none text-slate-850 dark:text-white"
+                />
+              </div>
+
+              <div className="space-y-1.5 text-left">
+                <label className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-550 block">3. Valeurs proposées (séparées par des virgules)</label>
+                <input
+                  type="text"
+                  placeholder="ex : S, M, L, XL   OU   Chêne noble, Noyer..."
+                  value={customOptionValuesText}
+                  onChange={(e) => setCustomOptionValuesText(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-855 rounded-xl px-3 py-2 text-xs outline-none text-slate-850 dark:text-white"
+                />
+                <span className="text-[9px] text-slate-400 font-mono italic block leading-relaxed mt-1">
+                  Les valeurs de saisie manuelle libre "Autre (Saisir manuellement)..." sont rajoutées automatiquement.
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleAddCustomOption}
+                className="w-full py-2.5 bg-[#2d4a22] hover:bg-[#1a2d15] text-white text-xs font-bold uppercase rounded-xl transition-all cursor-pointer shadow-sm text-center font-black"
+              >
+                + Insérer cette caractéristique
+              </button>
+            </div>
+
+            <div className="lg:col-span-2 space-y-4">
+              <div className="bg-slate-50/30 dark:bg-slate-950/20 border border-slate-150 dark:border-slate-800 p-4 rounded-2xl flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 font-sans">Récapitulatif &amp; Enregistrement en Base</h4>
+                  <p className="text-[10px] text-slate-500">Sauvegardez définitivement dans la base de données Firebase Firestore.</p>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={isSavingCustomOptions}
+                  onClick={handleSaveProductCustomOptions}
+                  className="px-5 py-2.5 bg-[#2d4a22] hover:bg-[#1a2d15] text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md disabled:opacity-75 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isSavingCustomOptions ? (
+                    <>
+                      <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>Enregistrement...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Sauvegarder</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="space-y-4 max-h-[460px] overflow-y-auto pr-1">
+                {products.map((p) => {
+                  const pOptions = localCustomOptions[p.id] || [];
+                  return (
+                    <div key={p.id} className="border border-slate-150 dark:border-slate-800 rounded-2xl p-4 space-y-3 bg-white dark:bg-slate-905">
+                      <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                        <span className="text-xs font-extrabold text-[#2d4a22] dark:text-emerald-450 uppercase">{p.name}</span>
+                        <span className="text-[9px] font-mono bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-slate-500">
+                          {pOptions.length} caractéristique(s)
+                        </span>
+                      </div>
+
+                      {pOptions.length === 0 ? (
+                        <p className="text-[10px] text-slate-400 italic">Aucune option spécifique. Utilise les suggestions de sa catégorie : <span className="font-bold underline">{p.category}</span></p>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                          {pOptions.map((opt, oIdx) => (
+                            <div key={oIdx} className="bg-slate-50/50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-850 flex justify-between items-start text-[11px] gap-2">
+                              <div className="space-y-1">
+                                <span className="font-bold text-slate-700 dark:text-slate-300">{opt.label}</span>
+                                <div className="flex flex-wrap gap-1">
+                                  {opt.values.map((val, vIdx) => (
+                                    <span key={vIdx} className="text-[8px] bg-white dark:bg-slate-900 border border-slate-205 text-slate-500 px-1 py-0.5 rounded truncate max-w-[120px]">
+                                      {val}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveCustomOption(p.id, oIdx)}
+                                className="p-1 hover:bg-rose-50 text-rose-500 rounded-lg transition-colors cursor-pointer"
+                                title="Supprimer la caractéristique"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                <div className="border border-amber-200 dark:border-amber-900/40 rounded-2xl p-4 space-y-3 bg-amber-500/5">
+                  <div className="flex items-center justify-between border-b border-amber-200/40 pb-2">
+                    <span className="text-xs font-extrabold text-amber-700 dark:text-amber-450 uppercase">PROJET LIBRE SUR-MESURE (+ Demander une création)</span>
+                    <span className="text-[9px] font-mono bg-amber-500/10 px-2 py-0.5 rounded text-amber-700 font-bold">
+                      {(localCustomOptions["custom_special_atelier"] || []).length} option(s)
+                    </span>
+                  </div>
+                  {(localCustomOptions["custom_special_atelier"] || []).length === 0 ? (
+                    <p className="text-[10px] text-amber-700/60 italic">Aucune option personnalisée configurée. Utilise la caractéristique intelligente par défaut.</p>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                      {(localCustomOptions["custom_special_atelier"] || []).map((opt, oIdx) => (
+                        <div key={oIdx} className="bg-white/85 dark:bg-slate-950 p-3 rounded-xl border border-amber-500/10 flex justify-between items-start text-[11px] gap-2 animate-fadeIn">
+                          <div className="space-y-1">
+                            <span className="font-bold text-slate-800 dark:text-slate-300">{opt.label}</span>
+                            <div className="flex flex-wrap gap-1">
+                              {opt.values.map((val, vIdx) => (
+                                <span key={vIdx} className="text-[8px] bg-slate-50 dark:bg-slate-900 border border-slate-150 px-1 py-0.5 rounded text-slate-500">
+                                  {val}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCustomOption("custom_special_atelier", oIdx)}
+                            className="p-1 hover:bg-rose-50 text-rose-500 rounded-lg transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
