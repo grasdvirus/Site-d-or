@@ -152,6 +152,13 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Protect Admin Route dynamically if user changes/logs out
+  useEffect(() => {
+    if (activeTab === "admin" && (!user || user.email !== "grasdvirus@gmail.com")) {
+      setActiveTab("store");
+    }
+  }, [user, activeTab]);
+
   // Sync products dynamically from Firestore products collection (Client side query)
   useEffect(() => {
     const fetchProducts = async () => {
@@ -390,14 +397,17 @@ export default function App() {
     } catch (e: any) {
       console.error("Google authentication failed:", e);
       const errCode = e?.code || "";
-      let errorHelpMsg = "La connexion Google a échoué.";
       
+      // If the user closed or cancelled the popup themselves, we do not show the critical config modal
+      if (errCode === "auth/cancelled-popup-request" || errCode === "auth/popup-closed-by-user") {
+        return; // Normal cancellation, ignore silently without popping up structural error modal
+      }
+      
+      let errorHelpMsg = "La connexion Google a échoué.";
       if (errCode === "auth/unauthorized-domain") {
         errorHelpMsg = "Ce domaine de déploiement (ex: Vercel) n'est pas encore autorisé dans votre console Firebase. Vous devez l'ajouter dans l'onglet 'Authentication > Paramètres > Domaines autorisés' de Firebase.";
       } else if (errCode === "auth/popup-blocked") {
         errorHelpMsg = "La fenêtre contextuelle de connexion a été bloquée par votre navigateur. Veuillez autoriser les popups pour ce site.";
-      } else if (errCode === "auth/cancelled-popup-request" || errCode === "auth/popup-closed-by-user") {
-        errorHelpMsg = "La fenêtre de connexion Google a été fermée avant la fin de l'opération.";
       } else {
         errorHelpMsg = `Erreur de connexion : ${e?.message || String(e)}. Assurez-vous d'avoir autorisé ce domaine sur la Console Firebase.`;
       }
@@ -832,30 +842,32 @@ export default function App() {
               )}
             </button>
 
-            {/* Admin toggle padlock button - accessible to administrators via passcode or Google accounts */}
-            <button
-              onClick={() => {
-                setActiveTab(activeTab === "store" ? "admin" : "store");
-                window.scrollTo({ top: 0, behavior: "smooth" });
-              }}
-              className={`text-[10px] uppercase font-extrabold tracking-widest px-4 py-2.5 rounded-xl cursor-pointer transition-all flex items-center gap-2 select-none ${
-                activeTab === "admin"
-                  ? "bg-[#2d4a22]/10 text-[#2d4a22] border border-[#2d4a22]/20"
-                  : "bg-slate-900 dark:bg-slate-800 hover:bg-slate-850 text-white"
-              }`}
-            >
-              {activeTab === "admin" ? (
-                <>
-                  <Unlock className="w-3.5 h-3.5" />
-                  {t.store || "Boutique"}
-                </>
-              ) : (
-                <>
-                  <Lock className="w-3.5 h-3.5" />
-                  {t.admin || "Admin 🔐"}
-                </>
-              )}
-            </button>
+            {/* Admin toggle padlock button - visible only to the administrator when logged in */}
+            {user && user.email === "grasdvirus@gmail.com" && (
+              <button
+                onClick={() => {
+                  setActiveTab(activeTab === "store" ? "admin" : "store");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`text-[10px] uppercase font-extrabold tracking-widest px-4 py-2.5 rounded-xl cursor-pointer transition-all flex items-center gap-2 select-none ${
+                  activeTab === "admin"
+                    ? "bg-[#2d4a22]/10 text-[#2d4a22] border border-[#2d4a22]/20"
+                    : "bg-slate-900 dark:bg-slate-800 hover:bg-slate-850 text-white"
+                }`}
+              >
+                {activeTab === "admin" ? (
+                  <>
+                    <Unlock className="w-3.5 h-3.5" />
+                    {t.store || "Boutique"}
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-3.5 h-3.5" />
+                    {t.admin || "Admin 🔐"}
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </header>
