@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Lock, Unlock, Plus, Trash2, Edit2, Check, X, Tag, Layers, Coins, ChevronDown, ChevronUp, Image as ImageIcon, Sliders, CheckCircle2, AlertTriangle, Hammer, ShieldCheck, Box, UserCheck, Settings, HelpCircle, FileText, Globe } from "lucide-react";
+import { Lock, Unlock, Plus, Trash2, Edit2, Check, X, Tag, Layers, Coins, ChevronDown, ChevronUp, Image as ImageIcon, Sliders, CheckCircle2, AlertTriangle, Hammer, ShieldCheck, Box, UserCheck, Settings, HelpCircle, FileText, Globe, Mail, Send, Inbox, RefreshCw } from "lucide-react";
 import { Product } from "../types";
 import { db } from "../firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
@@ -8,6 +8,7 @@ import { formatPrice } from "../translations";
 interface AdminPortalProps {
   products: Product[];
   onAddProduct: (newProduct: Product) => void;
+  onUpdateProduct?: (product: Product) => void;
   onDeleteProduct: (productId: string) => void;
   currentUser?: any;
   onGoogleLogin?: () => void;
@@ -23,6 +24,7 @@ interface AdminPortalProps {
 export default function AdminPortal({ 
   products, 
   onAddProduct, 
+  onUpdateProduct,
   onDeleteProduct, 
   currentUser, 
   onGoogleLogin,
@@ -36,8 +38,12 @@ export default function AdminPortal({
 }: AdminPortalProps) {
   // Authentication state
   const [localAuthenticated, setLocalAuthenticated] = useState(false);
+  const [prefillEmail, setPrefillEmail] = useState<{to: string, subject: string, body: string} | null>(null);
   const [passcode, setPasscode] = useState("");
   const [authError, setAuthError] = useState("");
+  
+  // Product edition / creation form states
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
   // Product creation form states
   const [name, setName] = useState("");
@@ -69,6 +75,48 @@ export default function AdminPortal({
   ]);
 
   const [notifMessage, setNotifMessage] = useState("");
+
+  const handleStartEditProduct = (p: Product) => {
+    setEditingProduct(p);
+    setName(p.name);
+    setTagline(p.tagline || "");
+    setDescription(p.description || "");
+    const priceCFA = Math.round(p.price * 655.957);
+    setPrice(String(priceCFA));
+    setStock(String(p.stock || 5));
+    setCategory(p.category);
+    setImage(p.image);
+    setColorsList(p.colors || []);
+    setVariantsLabel(p.variantsLabel || "Taille");
+    setVariantsList(p.variants || []);
+    setFeaturesList(p.features || []);
+
+    const formEl = document.getElementById("admin-product-form");
+    if (formEl) {
+      formEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const handleCancelEditProduct = () => {
+    setEditingProduct(null);
+    setName("");
+    setTagline("");
+    setDescription("");
+    setPrice("");
+    setStock("");
+    setCategory(categories[0] || "");
+    setImage("");
+    setColorsList([
+      { name: "Vert Signature", hex: "#2d4a22" },
+      { name: "Orange Terre Cuite", hex: "#c2410c" }
+    ]);
+    setVariantsLabel("Taille");
+    setVariantsList(["Standard Edition"]);
+    setFeaturesList([
+      "Conception artisanale nexus. exclusive",
+      "Garantie constructeur prolongée incluse"
+    ]);
+  };
 
   // Site dynamic configuration editing states
   const [activeSubTab, setActiveSubTab] = useState<"catalog" | "site_config" | "categories" | "orders" | "bespoke" | "custom_options">("catalog");
@@ -180,6 +228,7 @@ export default function AdminPortal({
   const [isSavingConfigs, setIsSavingConfigs] = useState(false);
   const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
   const [confirmDeleteCat, setConfirmDeleteCat] = useState<string | null>(null);
+  const [confirmDeleteProductId, setConfirmDeleteProductId] = useState<string | null>(null);
   const [confirmDeleteOrderId, setConfirmDeleteOrderId] = useState<string | null>(null);
 
   // Auto-init active category to the first available category if none is set
@@ -189,10 +238,27 @@ export default function AdminPortal({
     }
   }, [categories, category]);
 
-  // Read config state on mount from Firebase Firestore to allow live customization
+  // Read config state on mount with hybrid localStorage fallback
   useEffect(() => {
     const fetchConfig = async () => {
       try {
+        // Hydrate from localStorage first for instant rendering feedback
+        const localCopy = localStorage.getItem("site_config_general");
+        if (localCopy) {
+          try {
+            const data = JSON.parse(localCopy);
+            setFooterAbout(data.footerAbout || "");
+            setFooterContact(data.footerContact || "");
+            setFooterWarranty(data.footerWarranty || "");
+            setHeroTitle(data.heroTitle || "");
+            setHeroSub(data.heroSub || "");
+            setHeroDesc(data.heroDesc || "");
+            if (data.faqs) setFaqs(data.faqs);
+          } catch (e) {
+            console.warn("Stale config in local storage:", e);
+          }
+        }
+
         const configRef = doc(db, "site_config", "general");
         const docSnap = await getDoc(configRef);
         if (docSnap.exists()) {
@@ -205,9 +271,13 @@ export default function AdminPortal({
           setHeroDesc(data.heroDesc || "");
           if (data.faqs) {
             setFaqs(data.faqs);
+          } else if (data.faq) {
+            setFaqs(data.faq);
           }
-        } else {
-          // Default fallbacks matching beautiful design values
+          // Sync back to localStorage
+          localStorage.setItem("site_config_general", JSON.stringify(data));
+        } else if (!localCopy) {
+          // Default fallbacks matching beautiful design values of the atelier
           setFooterAbout("nexus. est un atelier artisanal d'exception engagé dans la création de mobilier haut de gamme éco-responsable. Chaque pièce allie lignes sculpturées et confort absolu.");
           setFooterContact("Atelier Central : Rue des Artisans d'Art, Zone Éco-Nexus • Écrivez-nous : contact@nexus-atelier.com • Service Client : +225 07 48 59 10 20");
           setFooterWarranty("Garantie Constructeur Prolongée de 5 Ans • Service de Livraison & d'Installation Offert partout à Abidjan.");
@@ -219,8 +289,13 @@ export default function AdminPortal({
             { question: "Quels sont vos délais moyens de livraison ?", answer: "Chaque commande étant personnalisée, comptez un délai moyen de fabrication et de livraison de 5 à 10 jours ouvrés pour Abidjan et 2000 F CFA fixes." }
           ]);
         }
-      } catch (err) {
-        console.error("Firestore loading error:", err);
+      } catch (err: any) {
+        const errorMsg = String(err?.message || err || "").toLowerCase();
+        if (errorMsg.includes("offline") || errorMsg.includes("failed to get document") || errorMsg.includes("network")) {
+          console.warn("Firestore offline - global Admin configuration fallback applied:", err);
+        } else {
+          console.error("Firestore loading error:", err);
+        }
       }
     };
     fetchConfig();
@@ -325,7 +400,7 @@ export default function AdminPortal({
     }
   };
 
-  // Submit and create product
+  // Submit, create or update product
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !price || !stock) {
@@ -347,22 +422,52 @@ export default function AdminPortal({
 
       const finalImage = image.trim() || defaultImages[Math.floor(Math.random() * defaultImages.length)];
 
-      const newProduct: Product = {
-        id: `nexus-${Date.now()}`,
-        name: name.trim(),
-        tagline: tagline.trim() || "Une création nexus. élégante.",
-        description: description.trim() || "Aucune description fournie.",
-        price: priceNum,
-        image: finalImage,
-        category: category,
-        colors: colorsList.length > 0 ? colorsList : [{ name: "Noir mat", hex: "#000000" }],
-        variantsLabel: variantsLabel.trim() || undefined,
-        variants: variantsList.length > 0 ? variantsList : undefined,
-        features: featuresList.length > 0 ? featuresList : ["Matériaux recyclés eco-conçus", "Emballage carton bio-dégradable"],
-        stock: isNaN(stockNum) ? 10 : stockNum
-      };
+      if (editingProduct) {
+        // Edit mode
+        const updatedProduct: Product = {
+          ...editingProduct,
+          name: name.trim(),
+          tagline: tagline.trim() || "Une création nexus. élégante.",
+          description: description.trim() || "Aucune description fournie.",
+          price: priceNum,
+          image: finalImage,
+          category: category,
+          colors: colorsList.length > 0 ? colorsList : [{ name: "Noir mat", hex: "#000000" }],
+          variantsLabel: variantsLabel.trim() || undefined,
+          variants: variantsList.length > 0 ? variantsList : undefined,
+          features: featuresList.length > 0 ? featuresList : ["Matériaux recyclés eco-conçus", "Emballage carton bio-dégradable"],
+          stock: isNaN(stockNum) ? 10 : stockNum
+        };
 
-      await onAddProduct(newProduct);
+        if (onUpdateProduct) {
+          await onUpdateProduct(updatedProduct);
+        } else {
+          // Direct fallback if prop isn't fully bound yet
+          await setDoc(doc(db, "products", editingProduct.id), updatedProduct, { merge: true });
+        }
+
+        setEditingProduct(null);
+        setNotifMessage(`Le produit "${updatedProduct.name}" a été modifié avec succès !`);
+      } else {
+        // Create mode
+        const newProduct: Product = {
+          id: `nexus-${Date.now()}`,
+          name: name.trim(),
+          tagline: tagline.trim() || "Une création nexus. élégante.",
+          description: description.trim() || "Aucune description fournie.",
+          price: priceNum,
+          image: finalImage,
+          category: category,
+          colors: colorsList.length > 0 ? colorsList : [{ name: "Noir mat", hex: "#000000" }],
+          variantsLabel: variantsLabel.trim() || undefined,
+          variants: variantsList.length > 0 ? variantsList : undefined,
+          features: featuresList.length > 0 ? featuresList : ["Matériaux recyclés eco-conçus", "Emballage carton bio-dégradable"],
+          stock: isNaN(stockNum) ? 10 : stockNum
+        };
+
+        await onAddProduct(newProduct);
+        setNotifMessage("Félicitations ! Le produit de luxe a bien été ajouté au catalogue en ligne.");
+      }
 
       // Reset fields
       setName("");
@@ -381,7 +486,6 @@ export default function AdminPortal({
         "Garantie constructeur prolongée incluse"
       ]);
 
-      setNotifMessage("Félicitations ! Le produit de luxe a bien été ajouté au catalogue en ligne.");
       setTimeout(() => setNotifMessage(""), 5000);
     } catch (err) {
       console.error("Save product failed:", err);
@@ -392,29 +496,36 @@ export default function AdminPortal({
 
   const handleSaveConfigs = async (e: React.FormEvent) => {
     e.preventDefault();
+    const newConfig = {
+      footerAbout: footerAbout.trim(),
+      footerContact: footerContact.trim(),
+      footerWarranty: footerWarranty.trim(),
+      heroTitle: heroTitle.trim(),
+      heroSub: heroSub.trim(),
+      heroDesc: heroDesc.trim(),
+      faqs: faqs
+    };
+
+    // 1. Optimistic instant local updates
+    localStorage.setItem("site_config_general", JSON.stringify(newConfig));
+    if (onSaveSiteConfig) {
+      onSaveSiteConfig(newConfig);
+    }
+    setNotifMessage("Configuration enregistrée instantanément ! (Synchronisation cloud asynchrone)");
+    setTimeout(() => setNotifMessage(""), 4500);
+
     try {
       setIsSavingConfigs(true);
       const configRef = doc(db, "site_config", "general");
-      const newConfig = {
-        footerAbout: footerAbout.trim(),
-        footerContact: footerContact.trim(),
-        footerWarranty: footerWarranty.trim(),
-        heroTitle: heroTitle.trim(),
-        heroSub: heroSub.trim(),
-        heroDesc: heroDesc.trim(),
-        faqs: faqs
-      };
-      await setDoc(configRef, newConfig, { merge: true });
-
-      if (onSaveSiteConfig) {
-        onSaveSiteConfig(newConfig);
-      }
-
-      setNotifMessage("Configuration du site enregistrée avec succès sur le Cloud Firestore !");
-      setTimeout(() => setNotifMessage(""), 5000);
+      
+      // 2. Fire-and-forget background Firestore write for high speed response (0ms await delay)
+      setDoc(configRef, newConfig, { merge: true }).then(() => {
+        console.log("Background cloud Firestore config sync complete.");
+      }).catch((err) => {
+        console.warn("Background cloud sync fallback, kept local cache:", err);
+      });
     } catch (err) {
       console.error("Save config failure:", err);
-      alert("Le paramétrage n'a pas pu être enregistré. Activez Firebase dans le panneau de ressources.");
     } finally {
       setIsSavingConfigs(false);
     }
@@ -471,6 +582,7 @@ export default function AdminPortal({
     try {
       setDeletingCategory(catToDelete);
       const updated = categories.filter(c => c !== catToDelete);
+      // Calls our optimistic asynchronous handler
       await onCategoriesChange(updated);
       setNotifMessage(`La catégorie "${catToDelete}" a été retirée.`);
       setTimeout(() => setNotifMessage(""), 4000);
@@ -499,16 +611,29 @@ export default function AdminPortal({
     try {
       setIsSavingCategory(true);
       
-      // Update global categories list doc on Firestore
+      // 1. Optimistic categories update
       const updatedCategories = categories.map(c => c === oldCatName ? cleanNew : c);
       await onCategoriesChange(updatedCategories);
 
-      // Batch update the category field of all products belonging to this old category
+      // 2. Parallelized background cloud product category transition with zero UI blocks
       const affectedProducts = products.filter(p => p.category === oldCatName);
-      for (const prod of affectedProducts) {
+      
+      // Run updates concurrently through Promise.all
+      const updatePromises = affectedProducts.map(async (prod) => {
+        const updatedProd = { ...prod, category: cleanNew };
+        if (onUpdateProduct) {
+          onUpdateProduct(updatedProd); // optimistically update local products state 
+        }
         const prodRef = doc(db, "products", prod.id);
-        await setDoc(prodRef, { ...prod, category: cleanNew });
-      }
+        return setDoc(prodRef, updatedProd);
+      });
+      
+      // Dispatch concurrent promises without holding user interface hostage
+      Promise.all(updatePromises).then(() => {
+        console.log(`Successfully migrated ${affectedProducts.length} products to category ${cleanNew}`);
+      }).catch((prodErr) => {
+        console.error("Delayed background products migration failed:", prodErr);
+      });
 
       setNotifMessage(`La catégorie "${oldCatName}" a été renommée en "${cleanNew}" avec succès !`);
       setTimeout(() => setNotifMessage(""), 4000);
@@ -622,6 +747,31 @@ export default function AdminPortal({
         </div>
       )}
 
+      {/* Google Authentication Alert for Firestore Connection */}
+      {(!currentUser || currentUser.email !== "grasdvirus@gmail.com") && (
+        <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 p-4.5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-left shadow-sm">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-amber-800 dark:text-amber-400 font-bold text-xs">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>Authentification Google requise pour sauvegarder</span>
+            </div>
+            <p className="text-[11px] text-amber-700/90 dark:text-amber-300 leading-relaxed max-w-2xl">
+              Vous êtes actuellement authentifié localement par code d'accès. Afin de pouvoir ajouter, modifier, supprimer des articles ou enregistrer les configurations en base de données, vous devez également être connecté sur Firebase avec votre compte Google Administrateur officiel (<strong className="underline">grasdvirus@gmail.com</strong>).
+            </p>
+          </div>
+          {onGoogleLogin && (
+            <button
+              type="button"
+              onClick={onGoogleLogin}
+              className="px-4.5 py-2.5 bg-amber-600 hover:bg-amber-700 active:translate-y-px text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-sm shrink-0 flex items-center gap-1.5 cursor-pointer"
+            >
+              <Globe className="w-3.5 h-3.5" />
+              S'authentifier Google
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Admin Panel Multi Sub Navigation Tabs */}
       <div className="flex flex-wrap border-b border-slate-100 justify-start gap-x-5 gap-y-2 select-none font-sans font-bold text-xs tracking-tight">
         <button
@@ -667,15 +817,42 @@ export default function AdminPortal({
           
           {/* Form to add item */}
           <form 
+            id="admin-product-form"
             onSubmit={handleCreateProduct}
-            className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-5 text-left sleek-shadow-md"
+            className={`lg:col-span-2 bg-white dark:bg-slate-900 rounded-3xl border p-6 md:p-8 space-y-5 text-left sleek-shadow-md transition-all ${editingProduct ? 'border-amber-400 ring-2 ring-amber-400/20' : 'border-slate-100 dark:border-slate-800'}`}
           >
-            <div className="border-b border-slate-100 dark:border-slate-800 pb-3 block">
-              <h3 className="font-sans font-bold text-slate-800 dark:text-white text-base tracking-tight flex items-center gap-2">
-                <Plus className="w-5 h-5 text-[#2d4a22]" />
-                Façonner un Nouveau Modèle Virtuel
-              </h3>
-              <p className="text-[11px] text-slate-400 mt-1">Saisissez les informations techniques de la création artisanale à exposer en ligne.</p>
+            <div className="border-b border-slate-100 dark:border-slate-800 pb-3 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="font-sans font-bold text-slate-800 dark:text-white text-base tracking-tight flex items-center gap-2">
+                  {editingProduct ? (
+                    <>
+                      <Edit2 className="w-5 h-5 text-amber-500" />
+                      Modifier la Création d'Artisanat
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-5 h-5 text-[#2d4a22]" />
+                      Façonner un Nouveau Modèle Virtuel
+                    </>
+                  )}
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  {editingProduct 
+                    ? `Modification de l'article : ${editingProduct.name}`
+                    : "Saisissez les informations techniques de la création artisanale à exposer en ligne."}
+                </p>
+              </div>
+
+              {editingProduct && (
+                <button
+                  type="button"
+                  onClick={handleCancelEditProduct}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-600 dark:text-slate-350 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                  Annuler
+                </button>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -982,17 +1159,17 @@ export default function AdminPortal({
             <button
               type="submit"
               disabled={isSavingProduct}
-              className="w-full py-4.5 bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-black text-xs uppercase tracking-widest rounded-2xl transition-all shadow-md cursor-pointer flex items-center justify-center gap-2 disabled:opacity-75 disabled:cursor-not-allowed"
+              className={`w-full py-4.5 text-white font-black text-xs uppercase tracking-widest rounded-2xl transition-all shadow-md cursor-pointer flex items-center justify-center gap-2 disabled:opacity-75 disabled:cursor-not-allowed ${editingProduct ? 'bg-amber-600 hover:bg-amber-700' : 'bg-[#2d4a22] hover:bg-[#1a2d15]'}`}
             >
               {isSavingProduct ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  <span>Publication en cours...</span>
+                  <span>{editingProduct ? "Mise à jour en cours..." : "Publication en cours..."}</span>
                 </>
               ) : (
                 <>
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Exposer et publier dans l'Atelier en ligne</span>
+                  <span>{editingProduct ? "Enregistrer les modifications du meuble" : "Exposer et publier dans l'Atelier en ligne"}</span>
                 </>
               )}
             </button>
@@ -1035,30 +1212,66 @@ export default function AdminPortal({
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    disabled={deletingProductId === p.id}
-                    onClick={async () => {
-                      if (window.confirm(`Confirmez-vous la suppression définitive du produit "${p.name}" ?`)) {
-                        try {
-                          setDeletingProductId(p.id);
-                          await onDeleteProduct(p.id);
-                        } catch (err) {
-                          console.error("Deletion failed:", err);
-                        } finally {
-                          setDeletingProductId(null);
-                        }
-                      }
-                    }}
-                    className="p-2.5 bg-rose-50 hover:bg-rose-500 text-rose-500 hover:text-white dark:bg-rose-950/20 rounded-xl transition-all shrink-0 flex items-center justify-center min-w-[40px] h-[40px] cursor-pointer"
-                    title="Supprimer définitivement"
-                  >
-                    {deletingProductId === p.id ? (
-                      <div className="w-4 h-4 border-2 border-rose-500 border-t-transparent rounded-full animate-spin"></div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {confirmDeleteProductId === p.id ? (
+                      <div className="flex items-center gap-1.5 animate-fadeIn p-1.5 bg-rose-50/50 dark:bg-rose-950/15 rounded-xl border border-rose-150/70 dark:border-rose-900/40">
+                        <span className="text-[9px] font-bold text-rose-750 dark:text-rose-400 font-mono px-1.5 block select-none">
+                          Effacer ?
+                        </span>
+                        <button
+                          type="button"
+                          disabled={deletingProductId === p.id}
+                          onClick={async () => {
+                            try {
+                              setDeletingProductId(p.id);
+                              await onDeleteProduct(p.id);
+                            } catch (err) {
+                              console.error("Deletion failed:", err);
+                            } finally {
+                              setDeletingProductId(null);
+                              setConfirmDeleteProductId(null);
+                            }
+                          }}
+                          className="p-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer shadow-sm"
+                          title="Confirmer la suppression"
+                        >
+                          {deletingProductId === p.id ? (
+                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          ) : (
+                            <Check className="w-3.5 h-3.5 stroke-[3]" />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteProductId(null)}
+                          className="p-1.5 bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer"
+                          title="Annuler"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     ) : (
-                      <Trash2 className="w-4 h-4" />
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleStartEditProduct(p)}
+                          className="p-2.5 bg-slate-100 hover:bg-[#2d4a22] text-slate-600 hover:text-white dark:bg-slate-800 dark:hover:bg-[#2d4a22] rounded-xl transition-all flex items-center justify-center min-w-[40px] h-[40px] cursor-pointer"
+                          title="Modifier cet article"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteProductId(p.id)}
+                          className="p-2.5 bg-rose-50 hover:bg-rose-500 text-rose-500 hover:text-white dark:bg-rose-950/20 rounded-xl transition-all flex items-center justify-center min-w-[40px] h-[40px] cursor-pointer shadow-sm"
+                          title="Supprimer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </>
                     )}
-                  </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1125,49 +1338,61 @@ export default function AdminPortal({
                 return (
                   <div 
                     key={cat}
-                    className="flex items-center justify-between p-3 rounded-xl bg-slate-50/50 dark:bg-slate-900 border border-slate-101 dark:border-slate-800 hover:bg-white dark:hover:bg-slate-850/50 transition-all group gap-3"
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-50/50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800/85 hover:bg-white dark:hover:bg-slate-900 transition-all gap-3 shadow-sm"
                   >
-                    <div className="flex-1 min-w-0">
-                      {isEditing ? (
-                        <form
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            handleUpdateCategory(cat, editingCategoryValue);
-                          }}
-                          className="flex items-center gap-2 w-full"
-                        >
-                          <input
-                            type="text"
-                            value={editingCategoryValue}
-                            onChange={(e) => setEditingCategoryValue(e.target.value)}
-                            className="text-xs px-2.5 py-1.5 border border-slate-300 dark:border-slate-750 rounded-lg w-full font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 focus:outline-none focus:ring-1 focus:ring-[#2d4a22]"
-                            placeholder="Nom de la catégorie"
-                            autoFocus
-                            disabled={isSavingCategory}
-                          />
-                        </form>
-                      ) : (
-                        <>
-                          <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block truncate">{cat}</span>
-                          <span className="text-[9px] font-mono font-bold text-slate-400 block">{associatedCount} meuble(s) associés</span>
-                        </>
-                      )}
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-[#2d4a22]/5 dark:bg-[#2d4a22]/15 flex items-center justify-center text-[#2d4a22] dark:text-emerald-450 shrink-0 select-none">
+                        <Tag className="w-4 h-4" />
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        {isEditing ? (
+                          <form
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              handleUpdateCategory(cat, editingCategoryValue);
+                            }}
+                            className="flex items-center gap-2 w-full"
+                          >
+                            <input
+                              type="text"
+                              required
+                              value={editingCategoryValue}
+                              onChange={(e) => setEditingCategoryValue(e.target.value)}
+                              className="text-xs px-2.5 py-1.5 border border-slate-200 focus:border-[#2d4a22] focus:bg-white dark:border-slate-755 rounded-lg w-full font-bold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 outline-none focus:ring-1 focus:ring-[#2d4a22]"
+                              placeholder="Nom de la catégorie"
+                              autoFocus
+                              disabled={isSavingCategory}
+                            />
+                          </form>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-slate-700 dark:text-slate-200 block truncate">{cat}</span>
+                            <span className="text-[9px] font-mono font-bold bg-[#2d4a22]/5 dark:bg-[#2d4a22]/15 text-[#2d4a22] dark:text-emerald-400 px-2 py-0.5 rounded-full select-none">
+                              {associatedCount} meuble{associatedCount > 1 ? "s" : ""}
+                            </span>
+                          </div>
+                        )}
+                        <span className="text-[9px] text-slate-400 block mt-0.5 select-none">
+                          {isEditing ? "Appuyez sur Entrée pour valider" : "Filtre actif de l'Atelier"}
+                        </span>
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0 justify-end">
                       {isEditing ? (
                         <>
                           <button
                             type="button"
                             disabled={isSavingCategory}
                             onClick={() => handleUpdateCategory(cat, editingCategoryValue)}
-                            className="p-2 bg-emerald-50 hover:bg-[#2d4a22] text-[#2d4a22] hover:text-white dark:bg-emerald-950/20 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer disabled:opacity-50"
-                            title="Valider la modification"
+                            className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-all flex items-center justify-center min-w-[30px] h-[30px] cursor-pointer disabled:opacity-50"
+                            title="Valider"
                           >
                             {isSavingCategory ? (
-                              <div className="w-3.5 h-3.5 border-2 border-[#2d4a22] border-t-transparent rounded-full animate-spin"></div>
+                              <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                             ) : (
-                              <Check className="w-3.5 h-3.5" />
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
                             )}
                           </button>
                           <button
@@ -1177,14 +1402,14 @@ export default function AdminPortal({
                               setEditingCategory(null);
                               setEditingCategoryValue("");
                             }}
-                            className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 dark:bg-slate-800 dark:hover:bg-slate-750 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer"
+                            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 dark:bg-slate-800 dark:hover:bg-slate-750 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[30px] h-[30px] cursor-pointer"
                             title="Annuler"
                           >
                             <X className="w-3.5 h-3.5" />
                           </button>
                         </>
                       ) : confirmDeleteCat === cat ? (
-                        <div className="flex items-center gap-1.5 animate-fadeIn p-1 bg-rose-50/50 dark:bg-rose-950/10 rounded-xl border border-rose-100 dark:border-rose-900/30">
+                        <div className="flex items-center gap-1.5 animate-fadeIn p-1.5 bg-rose-50/50 dark:bg-rose-950/15 rounded-xl border border-rose-100/70 dark:border-rose-900/40">
                           <span className="text-[10px] font-bold text-rose-650 dark:text-rose-400 font-mono px-2 block select-none">
                             {associatedCount > 0 ? `Effacer (${associatedCount} liés) ?` : "Vraiment supprimer ?"}
                           </span>
@@ -1198,19 +1423,19 @@ export default function AdminPortal({
                                 setConfirmDeleteCat(null);
                               }
                             }}
-                            className="p-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer shadow-sm"
+                            className="p-1 bg-rose-650 hover:bg-rose-700 text-white rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer shadow-sm"
                             title="Confirmer la suppression"
                           >
                             {deletingCategory === cat ? (
-                              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                              <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                             ) : (
-                              <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
                             )}
                           </button>
                           <button
                             type="button"
                             onClick={() => setConfirmDeleteCat(null)}
-                            className="p-1.5 bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer"
+                            className="p-1 bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer"
                             title="Annuler"
                           >
                             <X className="w-3.5 h-3.5" />
@@ -1225,8 +1450,8 @@ export default function AdminPortal({
                               setEditingCategory(cat);
                               setEditingCategoryValue(cat);
                             }}
-                            className="p-2 bg-slate-100/80 hover:bg-[#2d4a22] text-slate-600 hover:text-white dark:bg-slate-800 dark:hover:bg-[#2d4a22] dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer shadow-sm hover:shadow"
-                            title="Modifier le nom"
+                            className="p-1.5 bg-slate-100/95 hover:bg-[#2d4a22] text-slate-600 hover:text-white dark:bg-slate-800 dark:hover:bg-[#2d4a22] dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer shadow-sm"
+                            title="Modifier"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
@@ -1234,8 +1459,8 @@ export default function AdminPortal({
                             type="button"
                             disabled={deletingCategory === cat}
                             onClick={() => setConfirmDeleteCat(cat)}
-                            className="p-2 bg-rose-50 hover:bg-rose-600 text-rose-500 hover:text-white dark:bg-rose-950/20 dark:hover:bg-rose-900 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer shadow-sm hover:shadow"
-                            title="Supprimer la catégorie"
+                            className="p-1.5 bg-rose-50 hover:bg-rose-600 text-rose-500 hover:text-white dark:bg-rose-950/20 dark:hover:bg-rose-900 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer shadow-sm"
+                            title="Supprimer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1351,9 +1576,10 @@ export default function AdminPortal({
                   <button
                     type="button"
                     onClick={() => removeFaqItem(i)}
-                    className="absolute top-2 right-2 text-rose-500 font-bold hover:text-rose-700 font-sans"
+                    className="absolute top-2 right-2 text-rose-500 hover:text-rose-700 bg-rose-50 dark:bg-rose-950/20 p-1.5 rounded-lg transition-colors cursor-pointer"
+                    title="Effacer la question"
                   >
-                    Effacer
+                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               ))}
@@ -1391,21 +1617,26 @@ export default function AdminPortal({
             </button>
           </div>
 
-          <div className="pt-5 border-t border-slate-105 dark:border-slate-800 flex justify-end">
+          <div className="pt-6 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-2 text-[11px] text-slate-400 dark:text-slate-500 font-mono select-none">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>Double-persistance Cloud & Cache Local activée</span>
+            </div>
+            
             <button
               type="submit"
               disabled={isSavingConfigs}
-              className="py-3 px-8 bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all cursor-pointer shadow-sm flex items-center gap-2 disabled:opacity-75"
+              className="w-full sm:w-auto py-3.5 px-8 bg-[#2d4a22] hover:bg-emerald-800 active:scale-[0.98] text-white font-bold text-xs uppercase tracking-widest rounded-2xl transition-all cursor-pointer shadow-md hover:shadow-lg flex items-center justify-center gap-2.5 disabled:opacity-75"
             >
               {isSavingConfigs ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  <span>Enregistrement en cours...</span>
+                  <span>Synchronisation en cours...</span>
                 </>
               ) : (
                 <>
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Enregistrer la Configuration du Site</span>
+                  <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
+                  <span>Mettre à jour la configuration</span>
                 </>
               )}
             </button>
@@ -1551,6 +1782,16 @@ export default function AdminPortal({
                             <span className="font-mono underline text-slate-900 dark:text-white">
                               {ord.email || ord.shippingAddress?.email || "Non renseigné"}
                             </span>
+                            {(ord.email || ord.shippingAddress?.email) && (
+                              <a
+                                href={`mailto:${ord.email || ord.shippingAddress?.email}?subject=Votre commande ${ord.id} - Atelier Nexus Lounge&body=Bonjour ${ord.fullName || ord.shippingAddress?.fullName || 'Client d\'exception'},%0D%0A%0D%0ANous vous remercions pour votre commande d'exception ${ord.id} d'un montant de ${ord.total ? ord.total.toLocaleString() : '---'} CFA.%0D%0A%0D%0ANos artisans préparent votre mobilier avec la plus haute exigence.%0D%0A%0D%0ACordialement,%0D%0AL'Atelier Nexus Lounge`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="ml-2.5 inline-flex items-center gap-1 px-2 py-0.5 bg-[#2d4a22]/10 hover:bg-[#2d4a22]/15 text-[#2d4a22] dark:text-[#a3e635] text-[9px] uppercase font-black rounded cursor-pointer transition-all border border-[#2d4a22]/10"
+                                title="Contacter par e-mail"
+                              >
+                                <Mail className="w-2.5 h-2.5" /> Écrire
+                              </a>
+                            )}
                           </p>
 
                           <p className="text-slate-800 dark:text-slate-200">
@@ -1767,6 +2008,16 @@ export default function AdminPortal({
                           <p className="text-slate-800 dark:text-slate-200">
                             <span className="font-bold text-slate-450 mr-2 uppercase text-[9px] font-mono">Email :</span>
                             <span className="font-mono underline text-slate-900 dark:text-white">{ord.email}</span>
+                            {ord.email && (
+                              <a
+                                href={`mailto:${ord.email}?subject=Votre projet sur-mesure ${ord.id} - Atelier Nexus Lounge&body=Bonjour ${ord.fullName || 'Client d\'exception'},%0D%0A%0D%0ANous faisons suite à votre demande de projet sur-mesure d'Atelier ${ord.id}.%0D%0A%0D%0ANos artisans perfectionnent la conception sur-mesure de votre mobilier de prestige selon les caractéristiques spécifiées. Nous vous communiquerons le devis complet d'Atelier sous peu.%0D%0A%0D%0ACordialement,%0D%0AL'Atelier Nexus Lounge`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="ml-2.5 inline-flex items-center gap-1 px-2 py-0.5 bg-[#2d4a22]/10 hover:bg-[#2d4a22]/15 text-[#2d4a22] dark:text-[#a3e635] text-[9px] uppercase font-black rounded cursor-pointer transition-all border border-[#2d4a22]/10"
+                                title="Contacter par e-mail"
+                              >
+                                <Mail className="w-2.5 h-2.5" /> Écrire
+                              </a>
+                            )}
                           </p>
                           <p className="text-slate-800 dark:text-slate-200">
                             <span className="font-bold text-slate-450 mr-2 uppercase text-[9px] font-mono">Adresse Souhaitée:</span>

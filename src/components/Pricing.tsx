@@ -82,8 +82,12 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
   };
 
   const isRTL = lang === "ar";
-  const emptyFilterMsg = lang === "en" ? "No products match your search filters" : lang === "es" ? "Ningún modelo coincide con los filtros" : lang === "ar" ? "لم نجد أي تصاميم تطابق خيارات البحث الحالية" : "Aucun produit ne correspond à vos filtres";
-  const emptyFilterSub = lang === "en" ? "Try typing different letters or choose another filter above like Lounge." : lang === "es" ? "Intente escribir otros términos o seleccione otra categoría." : lang === "ar" ? "يرجى كتابة كلمة مفتاحية أخرى أو تغيير الفئات في الأعلى." : "Essayez de taper un autre terme ou de sélectionner une autre catégorie comme 'Lounge'.";
+  const emptyFilterMsg = products.length === 0
+    ? (lang === "en" ? "The boutique catalog is currently empty" : lang === "es" ? "El catálogo está vacío" : lang === "ar" ? "كتالوج الورشة فارغ حالياً" : "Le catalogue de la boutique est actuellement vide")
+    : (lang === "en" ? "No products match your search filters" : lang === "es" ? "Ningún modelo coincide con los filtros" : lang === "ar" ? "لم نجد أي تصاميم تطابق خيارات البحث الحالية" : "Aucun produit ne correspond à vos filtres");
+  const emptyFilterSub = products.length === 0
+    ? (lang === "en" ? "Log in as administrator to create products and populate your online boutique!" : lang === "es" ? "Inicie sesión como administrador para añadir artículos." : "Veuillez vous connecter à l'espace Administrateur (grasdvirus@gmail.com) pour ajouter vos articles et commencer à vendre.")
+    : (lang === "en" ? "Try typing different letters or choose another filter above like Lounge." : lang === "es" ? "Intente escribir otros términos o seleccione otra categoría." : lang === "ar" ? "يرجى كتابة كلمة مفتاحية أخرى أو تغيير الفئات في الأعلى." : "Essayez de taper un autre terme ou de sélectionner une autre catégorie comme 'Lounge'.");
 
   return (
     <div id="pricing-plans" className="space-y-8 text-left">

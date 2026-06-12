@@ -7,7 +7,7 @@ import firebaseConfig from "../firebase-applet-config.json";
 const app = initializeApp(firebaseConfig);
 
 // Initialize Firestore using custom Database ID from the config
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 
 // Initialize Authentication
 export const auth = getAuth(app);
@@ -42,4 +42,4 @@ export function handleFirestoreError(error: any): never {
   
   throw new Error(JSON.stringify(info));
 }
-export { signInWithPopup, signOut };
+export { signInWithPopup, signOut, GoogleAuthProvider };

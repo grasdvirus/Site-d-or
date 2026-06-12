@@ -44,7 +44,7 @@ import AdminPortal from "./components/AdminPortal";
 import ReviewsCarousel from "./components/ReviewsCarousel";
 import { INITIAL_PRODUCTS } from "./data";
 import { Product, CartItem } from "./types";
-import { db, auth, googleProvider, signInWithPopup, signOut, handleFirestoreError } from "./firebase";
+import { db, auth, googleProvider, signInWithPopup, signOut, handleFirestoreError, GoogleAuthProvider } from "./firebase";
 import { collection, query, getDocs, getDoc, doc, setDoc, deleteDoc, serverTimestamp, where, addDoc } from "firebase/firestore";
 import { TRANSLATIONS, Language, Theme, Currency, formatPrice, CURRENCIES } from "./translations";
 
@@ -97,8 +97,8 @@ export default function App() {
   // Active translation dictionary
   const t = TRANSLATIONS[lang] || TRANSLATIONS.fr;
 
-  // Products state - initialized with INITIAL_PRODUCTS, updated from Firestore
-  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
+  // Products state - initialized to empty first, synced live from Firestore
+  const [products, setProducts] = useState<Product[]>([]);
 
   // Cart State - Persisted locally
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -167,8 +167,8 @@ export default function App() {
         const querySnapshot = await getDocs(q);
         
         if (querySnapshot.empty) {
-          // If Firestore contains zero products, we fall back to displaying INITIAL_PRODUCTS in UI
-          setProducts(INITIAL_PRODUCTS);
+          // Keep the catalog as clean/virgin when Firestore has zero products
+          setProducts([]);
         } else {
           const loadedProducts: Product[] = [];
           querySnapshot.forEach((docSnapshot) => {
@@ -176,9 +176,15 @@ export default function App() {
           });
           setProducts(loadedProducts);
         }
-      } catch (err) {
-        console.error("Failed to load products from Firestore, using fallback local values:", err);
-        setProducts(INITIAL_PRODUCTS);
+      } catch (err: any) {
+        const errorMsg = String(err?.message || err || "").toLowerCase();
+        if (errorMsg.includes("offline") || errorMsg.includes("failed to get document") || errorMsg.includes("network")) {
+          console.warn("Firestore offline - loaded products from local fallback:", err);
+          setProducts(INITIAL_PRODUCTS); // fallback to demo products only when offline/local mode
+        } else {
+          console.error("Failed to load products from Firestore, using empty list:", err);
+          setProducts([]);
+        }
       } finally {
         setIsDbLoading(false);
       }
@@ -200,8 +206,13 @@ export default function App() {
             setSiteConfig({ id: matched.id, ...matched.data() } as any);
           }
         }
-      } catch (err) {
-        console.error("Failed to load global site configuration values from Firestore:", err);
+      } catch (err: any) {
+        const errorMsg = String(err?.message || err || "").toLowerCase();
+        if (errorMsg.includes("offline") || errorMsg.includes("failed to get document") || errorMsg.includes("network")) {
+          console.warn("Firestore offline - using local fallback for site configuration:", err);
+        } else {
+          console.error("Failed to load global site configuration values from Firestore:", err);
+        }
       }
     };
     fetchSiteConfig();
@@ -222,8 +233,13 @@ export default function App() {
           fetched.push(docSnap.data());
         });
         setMyOrders(fetched);
-      } catch (err) {
-        console.error("Error reading past purchases:", err);
+      } catch (err: any) {
+        const errorMsg = String(err?.message || err || "").toLowerCase();
+        if (errorMsg.includes("offline") || errorMsg.includes("failed to get document") || errorMsg.includes("network")) {
+          console.warn("Firestore offline - user orders history unavailable:", err);
+        } else {
+          console.error("Error reading past purchases:", err);
+        }
       }
     };
     fetchMyOrders();
@@ -249,8 +265,13 @@ export default function App() {
           return timeB - timeA;
         });
         setAllOrders(fetched);
-      } catch (err) {
-        console.error("Error reading all orders for admin:", err);
+      } catch (err: any) {
+        const errorMsg = String(err?.message || err || "").toLowerCase();
+        if (errorMsg.includes("offline") || errorMsg.includes("failed to get document") || errorMsg.includes("network")) {
+          console.warn("Firestore offline - admin orders tracking unavailable:", err);
+        } else {
+          console.error("Error reading all orders for admin:", err);
+        }
       }
     };
     fetchAllOrders();
@@ -300,21 +321,32 @@ export default function App() {
             setCategories(data.categories);
           }
         }
-      } catch (err) {
-        console.error("Failed to load categories list from Firestore:", err);
+      } catch (err: any) {
+        const errorMsg = String(err?.message || err || "").toLowerCase();
+        if (errorMsg.includes("offline") || errorMsg.includes("failed to get document") || errorMsg.includes("network")) {
+          console.warn("Firestore offline - loading categories from local fallback:", err);
+        } else {
+          console.error("Failed to load categories list from Firestore:", err);
+        }
       }
     };
     fetchCategories();
   }, [user]);
 
   const handleCategoriesChange = async (newCategories: string[]) => {
+    // Optimistic fast update
+    const previousCategories = [...categories];
+    setCategories(newCategories);
+    
     try {
       const docRef = doc(db, "site_config", "categories_config");
-      await setDoc(docRef, { categories: newCategories });
-      setCategories(newCategories);
+      // Fire-and-forget background save without blocking UI thread
+      setDoc(docRef, { categories: newCategories }).catch((err) => {
+        console.error("Delayed background update of categories config failed:", err);
+        setCategories(previousCategories);
+      });
     } catch (err) {
-      console.error("Failed to update categories configuration in Firestore:", err);
-      alert("Erreur lors de l'enregistrement des catégories.");
+      console.warn("Categories instant dispatch config err:", err);
     }
   };
 
@@ -327,21 +359,32 @@ export default function App() {
         if (docSnap.exists()) {
           setCustomOptions(docSnap.data().product_options_map || {});
         }
-      } catch (err) {
-        console.error("Failed to load product custom options from Firestore:", err);
+      } catch (err: any) {
+        const errorMsg = String(err?.message || err || "").toLowerCase();
+        if (errorMsg.includes("offline") || errorMsg.includes("failed to get document") || errorMsg.includes("network")) {
+          console.warn("Firestore offline - custom options from local fallback:", err);
+        } else {
+          console.error("Failed to load product custom options from Firestore:", err);
+        }
       }
     };
     fetchCustomOptions();
   }, [activeTab]);
 
   const handleSaveCustomOptions = async (newMap: Record<string, { label: string; values: string[] }[]>) => {
+    // Optimistic fast update
+    const previousOptions = { ...customOptions };
+    setCustomOptions(newMap);
+    
     try {
       const docRef = doc(db, "site_config", "custom_options_config");
-      await setDoc(docRef, { product_options_map: newMap });
-      setCustomOptions(newMap);
+      // Background save without blocking UI thread
+      setDoc(docRef, { product_options_map: newMap }).catch((err) => {
+        console.error("Delayed background custom options save failed:", err);
+        setCustomOptions(previousOptions);
+      });
     } catch (err) {
-      console.error("Failed to save custom options in Firestore:", err);
-      alert("Erreur lors de la sauvegarde des options de personnalisation.");
+      console.warn("Custom options change dispatch err:", err);
     }
   };
 
@@ -399,51 +442,74 @@ export default function App() {
     }
   };
 
-  // Admin add and remove connected to firestore
+  // Admin add, update and remove connected to firestore
   const handleAddNewProduct = async (newProduct: Product) => {
+    // Optimistic UI update
+    const previousProducts = [...products];
+    setProducts([newProduct, ...products]);
+
     try {
-      await setDoc(doc(db, "products", newProduct.id), newProduct);
-      setProducts([newProduct, ...products]);
+      // Async fire and forget
+      setDoc(doc(db, "products", newProduct.id), newProduct).catch((e: any) => {
+        console.error("Background product publishing failed:", e);
+        setProducts(previousProducts);
+      });
     } catch (e: any) {
-      console.error("Product publishing failed:", e);
-      try {
-        handleFirestoreError(e);
-      } catch (fmtDocErr: any) {
-        const schemaErr = JSON.parse(fmtDocErr.message);
-        alert(`Erreur de publication Firestore : ${schemaErr.message}\nDetail : ${schemaErr.details || ""}`);
-      }
+      console.warn("Product add instant dispatch err:", e);
+    }
+  };
+
+  const handleUpdateProduct = async (updatedProduct: Product) => {
+    // Optimistic UI update
+    const previousProducts = [...products];
+    setProducts(products.map(p => p.id === updatedProduct.id ? updatedProduct : p));
+
+    try {
+      // Async fire and forget
+      setDoc(doc(db, "products", updatedProduct.id), updatedProduct).catch((e: any) => {
+        console.error("Background product update failed:", e);
+        setProducts(previousProducts);
+      });
+    } catch (e: any) {
+      console.warn("Product update instant dispatch err:", e);
     }
   };
 
   const handleDeleteProduct = async (productId: string) => {
+    // Optimistic UI update
+    const previousProducts = [...products];
+    const previousCart = [...cart];
+    setProducts(products.filter(p => p.id !== productId));
+    setCart(cart.filter(item => item.product.id !== productId));
+
     try {
-      await deleteDoc(doc(db, "products", productId));
-      setProducts(products.filter(p => p.id !== productId));
-      setCart(cart.filter(item => item.product.id !== productId));
+      // Async fire and forget
+      deleteDoc(doc(db, "products", productId)).catch((e: any) => {
+        console.error("Background product deletion failed, reverting:", e);
+        setProducts(previousProducts);
+        setCart(previousCart);
+      });
     } catch (e: any) {
-      console.error("Product deletion failed:", e);
-      try {
-        handleFirestoreError(e);
-      } catch (fmtDocErr: any) {
-        const schemaErr = JSON.parse(fmtDocErr.message);
-        alert(`Erreur de suppression Firestore : ${schemaErr.message}`);
-      }
+      console.warn("Product delete instant dispatch err:", e);
     }
   };
 
   const handleDeleteOrder = async (orderId: string) => {
+    // Optimistic UI update
+    const previousAllOrders = [...allOrders];
+    const previousMyOrders = [...myOrders];
+    setAllOrders(allOrders.filter(ord => ord.id !== orderId));
+    setMyOrders(myOrders.filter(ord => ord.id !== orderId));
+
     try {
-      await deleteDoc(doc(db, "orders", orderId));
-      setAllOrders(allOrders.filter(ord => ord.id !== orderId));
-      setMyOrders(myOrders.filter(ord => ord.id !== orderId));
+      // Async fire and forget
+      deleteDoc(doc(db, "orders", orderId)).catch((e: any) => {
+        console.error("Background order deletion failed, reverting:", e);
+        setAllOrders(previousAllOrders);
+        setMyOrders(previousMyOrders);
+      });
     } catch (e: any) {
-      console.error("Order deletion failed:", e);
-      try {
-        handleFirestoreError(e);
-      } catch (fmtDocErr: any) {
-        const schemaErr = JSON.parse(fmtDocErr.message);
-        alert(`Erreur de suppression de la commande Firestore : ${schemaErr.message}`);
-      }
+      console.warn("Order delete instant dispatch err:", e);
     }
   };
 
@@ -801,6 +867,7 @@ export default function App() {
             <AdminPortal 
               products={products}
               onAddProduct={handleAddNewProduct}
+              onUpdateProduct={handleUpdateProduct}
               onDeleteProduct={handleDeleteProduct}
               currentUser={user}
               onGoogleLogin={handleGoogleLogin}
@@ -1254,7 +1321,7 @@ export default function App() {
                     </motion.div>
                   ) : checkoutStep === "form" ? (
                     /* Shipping Form Screen */
-                    <form onSubmit={handleSubmitCheckout} className="space-y-4 text-left">
+                    <form id="checkout-shipping-form" onSubmit={handleSubmitCheckout} className="space-y-4 text-left">
                       <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 pb-2">
                         <button 
                           type="button" 
@@ -1365,12 +1432,6 @@ export default function App() {
                         </div>
                       </div>
 
-                      <button
-                        type="submit"
-                        className="w-full mt-6 bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-widest py-3.5 rounded-lg cursor-pointer shadow-sm transition-colors"
-                      >
-                        {t.paySubmit} ({formatPrice(grandTotal, currency)})
-                      </button>
                     </form>
                   ) : cart.length === 0 ? (
                     /* Empty Cart */
@@ -1503,6 +1564,16 @@ export default function App() {
                       >
                         {t.checkoutBtn}
                         <ArrowRight className="w-4 h-4" />
+                      </button>
+                    )}
+
+                    {checkoutStep === "form" && (
+                      <button
+                        type="submit"
+                        form="checkout-shipping-form"
+                        className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-widest py-3.5 rounded-xl cursor-pointer shadow-sm transition-all text-center flex items-center justify-center gap-2 select-none"
+                      >
+                        {t.paySubmit} ({formatPrice(grandTotal, currency)})
                       </button>
                     )}
                   </div>
