@@ -740,7 +740,7 @@ export default function App() {
             className="flex items-center gap-2 cursor-pointer group select-none"
           >
             <img 
-              src="/src/assets/images/favicon_coin_1781258932861.jpg" 
+              src="/favicon_coin_1781258932861.jpg" 
               alt="sitedor favicon" 
               referrerPolicy="no-referrer"
               className="w-5.5 h-5.5 rounded-full object-cover border border-[#2d4a22]/20 dark:border-amber-500/10 shadow-3xs"
@@ -1231,7 +1231,7 @@ export default function App() {
           <div className="space-y-3">
             <h4 className="font-sans font-black text-sm tracking-tight text-slate-950 dark:text-white flex items-center gap-1.5 justify-start">
               <img 
-                src="/src/assets/images/favicon_coin_1781258932861.jpg" 
+                src="/favicon_coin_1781258932861.jpg" 
                 alt="sitedor favicon" 
                 referrerPolicy="no-referrer"
                 className="w-4.5 h-4.5 rounded-full object-cover border border-[#2d4a22]/20 shadow-4xs"

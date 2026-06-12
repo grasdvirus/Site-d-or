@@ -217,6 +217,7 @@ export default function AdminPortal({
 
   // Local image upload dragging state
   const [imageDragging, setImageDragging] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   // Saving and deleting spinner states
   const [isSavingProduct, setIsSavingProduct] = useState(false);
@@ -359,9 +360,30 @@ export default function AdminPortal({
         return;
       }
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         if (typeof reader.result === "string") {
-          setImage(reader.result);
+          setIsUploadingImage(true);
+          try {
+            const res = await fetch("/api/upload", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                base64: reader.result,
+                filename: file.name
+              })
+            });
+            const data = await res.json();
+            if (data.url) {
+              setImage(data.url);
+            } else {
+              alert("Erreur de téléversement : " + (data.error || "Inconnu"));
+            }
+          } catch (err: any) {
+            console.error("Upload error:", err);
+            alert("Erreur de connexion au serveur de téléversement d'images.");
+          } finally {
+            setIsUploadingImage(false);
+          }
         }
       };
       reader.readAsDataURL(file);
@@ -391,9 +413,30 @@ export default function AdminPortal({
         return;
       }
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         if (typeof reader.result === "string") {
-          setImage(reader.result);
+          setIsUploadingImage(true);
+          try {
+            const res = await fetch("/api/upload", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                base64: reader.result,
+                filename: file.name
+              })
+            });
+            const data = await res.json();
+            if (data.url) {
+              setImage(data.url);
+            } else {
+              alert("Erreur de téléversement : " + (data.error || "Inconnu"));
+            }
+          } catch (err: any) {
+            console.error("Upload error:", err);
+            alert("Erreur de connexion au serveur de téléversement d'images.");
+          } finally {
+            setIsUploadingImage(false);
+          }
         }
       };
       reader.readAsDataURL(file);
@@ -959,7 +1002,12 @@ export default function AdminPortal({
                     className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
                   />
                   
-                  {image ? (
+                  {isUploadingImage ? (
+                    <div className="flex flex-col items-center space-y-2 pointer-events-none">
+                      <div className="w-8 h-8 rounded-full border-2 border-[#2d4a22]/80 border-t-transparent animate-spin" />
+                      <p className="text-[10px] font-bold text-[#2d4a22] font-mono animate-pulse">Téléchargement et stockage de l'image...</p>
+                    </div>
+                  ) : image ? (
                     <div className="flex flex-col items-center space-y-2 pointer-events-none">
                       <div className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-200 shadow-2xs">
                         <img 
@@ -969,7 +1017,9 @@ export default function AdminPortal({
                           className="w-full h-full object-cover"
                         />
                       </div>
-                      <p className="text-[10px] font-semibold text-[#2d4a22] font-mono">Image chargée avec succès (Base64)</p>
+                      <p className="text-[10px] font-semibold text-[#2d4a22] font-mono">
+                        {image.startsWith("/uploads/") ? "Photo stockée avec succès sur le serveur" : "Image chargée avec succès"}
+                      </p>
                       <button
                         type="button"
                         onClick={(e) => {
