@@ -734,13 +734,19 @@ export default function App() {
             : "bg-white/80 border-[#e6eee3] text-slate-850 backdrop-blur-md"
         }`}>
           
-          {/* Logo with Green indicator */}
+          {/* Logo with Sitedor & Favicon coin */}
           <div 
             onClick={() => handleScrollToId("store-hero")} 
-            className="flex items-center gap-1.5 cursor-pointer group select-none"
+            className="flex items-center gap-2 cursor-pointer group select-none"
           >
+            <img 
+              src="/src/assets/images/favicon_coin_1781258932861.jpg" 
+              alt="sitedor favicon" 
+              referrerPolicy="no-referrer"
+              className="w-5.5 h-5.5 rounded-full object-cover border border-[#2d4a22]/20 dark:border-amber-500/10 shadow-3xs"
+            />
             <span className={`font-sans font-black text-xl tracking-tight ${theme === 'black' ? 'text-white' : 'text-slate-900'}`}>
-              nexus<span className="inline-block w-2.5 h-2.5 rounded-full bg-[#2d4a22] ml-0.5 animate-pulse"></span>
+              sitedor<span className="inline-block w-1.5 h-1.5 rounded-full bg-[#2d4a22] ml-0.5 animate-pulse"></span>
             </span>
           </div>
 
@@ -1224,7 +1230,13 @@ export default function App() {
           
           <div className="space-y-3">
             <h4 className="font-sans font-black text-sm tracking-tight text-slate-950 dark:text-white flex items-center gap-1.5 justify-start">
-              nexus<span className="w-2.5 h-2.5 rounded-full bg-[#2d4a22] inline-block"></span>
+              <img 
+                src="/src/assets/images/favicon_coin_1781258932861.jpg" 
+                alt="sitedor favicon" 
+                referrerPolicy="no-referrer"
+                className="w-4.5 h-4.5 rounded-full object-cover border border-[#2d4a22]/20 shadow-4xs"
+              />
+              sitedor<span className="w-1.5 h-1.5 rounded-full bg-[#2d4a22] inline-block"></span>
             </h4>
             <p className="leading-relaxed font-medium">
               {siteConfig?.footerAbout || (lang === 'en' ? "Artistic carpentry atelier and manufacturer of premium ergonomic comfort seating. All materials originate from state-certified sustainable forests with Retro-Scandinavian design." : lang === 'es' ? "Taller de carpintería artesanal de gran confort inspirado en corrientes nórdicas." : lang === 'ar' ? "ورشة نجارة فنية عالية الجودة لتصنيع المقاعد الوظيفية المريحة. جميع موادنا مستخلصة من غابات مستدامة." : "Atelier d'ébénisterie d'art et de confection d'assises ergonomiques de grand confort. Nos matières premières proviennent de forêts certifiées à gestion durable. Cabinet d'inspiration rétro-scandinave.")}
@@ -1254,7 +1266,7 @@ export default function App() {
               {siteConfig?.footerWarranty || (lang === 'en' ? "Every piece bought online includes a 5-year constructor warranty coverage on foam resilience along with direct workspace support." : lang === 'es' ? "Toda compra incluye cobertura de 5 años contra affaissement estructural." : lang === 'ar' ? "تستفيد جميع المنتجات المشترات إلكترونياً من تأمين وحماية ضد الأعطال الهيكلية لمدة 5 سنوات." : "Toutes les pièces commandées en ligne bénéficient d'une assurance contre les déformations de mousse de 5 ans et d'une assistance directe par chat d'atelier.")}
             </p>
             <div className="text-slate-400 dark:text-slate-400 font-medium">
-              &copy; {new Date().getFullYear()} nexus. All Rights Reserved.
+              &copy; {new Date().getFullYear()} sitedor. All Rights Reserved.
             </div>
           </div>
 
