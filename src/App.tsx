@@ -141,6 +141,7 @@ export default function App() {
   const [spotlightQty, setSpotlightQty] = useState(1);
   const [spotlightColorIdx, setSpotlightColorIdx] = useState(0);
   const [spotlightAdded, setSpotlightAdded] = useState(false);
+  const [googleAuthError, setGoogleAuthError] = useState<string | null>(null);
 
   // Subscribe to Auth State Changes
   useEffect(() => {
@@ -150,13 +151,6 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
-
-  // Protect Admin Route dynamically if user changes/logs out
-  useEffect(() => {
-    if (activeTab === "admin" && (!user || user.email !== "grasdvirus@gmail.com")) {
-      setActiveTab("store");
-    }
-  }, [user, activeTab]);
 
   // Sync products dynamically from Firestore products collection (Client side query)
   useEffect(() => {
@@ -391,9 +385,23 @@ export default function App() {
   // Google Sign-In helper triggers Google Auth Provider
   const handleGoogleLogin = async () => {
     try {
+      setGoogleAuthError(null);
       await signInWithPopup(auth, googleProvider);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Google authentication failed:", e);
+      const errCode = e?.code || "";
+      let errorHelpMsg = "La connexion Google a échoué.";
+      
+      if (errCode === "auth/unauthorized-domain") {
+        errorHelpMsg = "Ce domaine de déploiement (ex: Vercel) n'est pas encore autorisé dans votre console Firebase. Vous devez l'ajouter dans l'onglet 'Authentication > Paramètres > Domaines autorisés' de Firebase.";
+      } else if (errCode === "auth/popup-blocked") {
+        errorHelpMsg = "La fenêtre contextuelle de connexion a été bloquée par votre navigateur. Veuillez autoriser les popups pour ce site.";
+      } else if (errCode === "auth/cancelled-popup-request" || errCode === "auth/popup-closed-by-user") {
+        errorHelpMsg = "La fenêtre de connexion Google a été fermée avant la fin de l'opération.";
+      } else {
+        errorHelpMsg = `Erreur de connexion : ${e?.message || String(e)}. Assurez-vous d'avoir autorisé ce domaine sur la Console Firebase.`;
+      }
+      setGoogleAuthError(errorHelpMsg);
     }
   };
 
@@ -824,32 +832,30 @@ export default function App() {
               )}
             </button>
 
-            {/* Admin toggle padlock button - conditionally displayed ONLY to grasdvirus@gmail.com */}
-            {user && user.email === "grasdvirus@gmail.com" && (
-              <button
-                onClick={() => {
-                  setActiveTab(activeTab === "store" ? "admin" : "store");
-                  window.scrollTo({ top: 0, behavior: "smooth" });
-                }}
-                className={`text-[10px] uppercase font-extrabold tracking-widest px-4 py-2.5 rounded-xl cursor-pointer transition-all flex items-center gap-2 select-none ${
-                  activeTab === "admin"
-                    ? "bg-[#2d4a22]/10 text-[#2d4a22] border border-[#2d4a22]/20"
-                    : "bg-slate-900 dark:bg-slate-800 hover:bg-slate-850 text-white"
-                }`}
-              >
-                {activeTab === "admin" ? (
-                  <>
-                    <Unlock className="w-3.5 h-3.5" />
-                    {t.store || "Boutique"}
-                  </>
-                ) : (
-                  <>
-                    <Lock className="w-3.5 h-3.5" />
-                    {t.admin || "Admin 🔐"}
-                  </>
-                )}
-              </button>
-            )}
+            {/* Admin toggle padlock button - accessible to administrators via passcode or Google accounts */}
+            <button
+              onClick={() => {
+                setActiveTab(activeTab === "store" ? "admin" : "store");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+              className={`text-[10px] uppercase font-extrabold tracking-widest px-4 py-2.5 rounded-xl cursor-pointer transition-all flex items-center gap-2 select-none ${
+                activeTab === "admin"
+                  ? "bg-[#2d4a22]/10 text-[#2d4a22] border border-[#2d4a22]/20"
+                  : "bg-slate-900 dark:bg-slate-800 hover:bg-slate-850 text-white"
+              }`}
+            >
+              {activeTab === "admin" ? (
+                <>
+                  <Unlock className="w-3.5 h-3.5" />
+                  {t.store || "Boutique"}
+                </>
+              ) : (
+                <>
+                  <Lock className="w-3.5 h-3.5" />
+                  {t.admin || "Admin 🔐"}
+                </>
+              )}
+            </button>
           </div>
         </div>
       </header>
@@ -1855,6 +1861,84 @@ export default function App() {
               >
                 {t.closeBtn}
               </button>
+            </motion.div>
+          </div>
+        )}
+
+        {/* GOOGLE AUTHENTICATION ERROR & VERCEL ACCESS RECOVERY MODAL */}
+        {googleAuthError && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setGoogleAuthError(null)}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-xs cursor-pointer"
+            />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative bg-white dark:bg-slate-900 border border-rose-105 dark:border-rose-950/30 rounded-3xl shadow-2xl p-6 md:p-8 max-w-lg w-full z-10 text-left space-y-5"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-rose-50 dark:bg-rose-955 text-rose-600 dark:text-rose-450 rounded-xl">
+                    <AlertTriangle className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="font-sans font-extrabold text-[#991b1b] dark:text-rose-450 tracking-tight text-sm">
+                      Configuration Firebase Requise (Vercel)
+                    </h3>
+                    <p className="text-[10px] text-slate-400 uppercase font-mono tracking-wider">Erreur de Connexion Détectée</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setGoogleAuthError(null)}
+                  className="p-1 text-slate-400 hover:text-slate-650 dark:hover:text-slate-205 cursor-pointer text-xl font-bold"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <div className="p-3 bg-slate-50 dark:bg-slate-955 border border-slate-100 dark:border-slate-800 rounded-2xl text-xs font-mono text-slate-700 dark:text-slate-350 select-text leading-relaxed break-words">
+                {googleAuthError}
+              </div>
+
+              <div className="space-y-3.5 pt-1">
+                <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                  Comment résoudre ce problème une fois en ligne sur Vercel ?
+                </p>
+                <ol className="text-xs text-slate-655 dark:text-slate-350 space-y-2.5 list-decimal pl-4">
+                  <li>
+                    Rendez-vous sur votre <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" className="text-[#2d4a22] hover:underline font-extrabold">Console Firebase</a> et ouvrez votre projet.
+                  </li>
+                  <li>
+                    Allez dans la section <strong>Authentication</strong> (dans le menu latéral gauche), puis cliquez sur l'onglet <strong>Settings</strong> (Paramètres / Configuration).
+                  </li>
+                  <li>
+                    Faites défiler jusqu'à la section <strong>Domaines Autorisés</strong> (Authorized domains) et cliquez sur <strong>"Ajouter un domaine"</strong>.
+                  </li>
+                  <li>
+                    Entrez le nom de domaine complet correspondant à votre site Vercel (par exemple : <code>votre-projet.vercel.app</code>) et validez.
+                  </li>
+                  <li>
+                    <strong>Alternative Immédiate :</strong> Vous pouvez accéder de suite à la console d'administration en saisissant le code d'accès secret à l'Atelier (<strong>1234</strong> ou <strong>nexus-admin-99</strong>) sur l'écran d'administration !
+                  </li>
+                </ol>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setGoogleAuthError(null)}
+                  className="px-5 py-2.5 bg-[#2d4a22] hover:bg-[#1f3318] text-white text-xs font-bold rounded-xl transition-all shadow-sm cursor-pointer"
+                >
+                  J'ai compris
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
