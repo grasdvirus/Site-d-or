@@ -193,6 +193,107 @@
         }
       },
       "required": ["id"]
+    },
+    "PromoCode": {
+      "title": "PromoCode",
+      "description": "Discount codes configured by the administrator",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Uppercase promo coupon identifier"
+        },
+        "discount": {
+          "type": "number",
+          "description": "Percentage value of the cart reduction"
+        },
+        "description": {
+          "type": "string",
+          "description": "Explanatory text about the coupon criteria"
+        },
+        "status": {
+          "type": "string",
+          "description": "Active or planned status of the coupon code"
+        }
+      },
+      "required": ["code", "discount", "status"]
+    },
+    "ProductRequest": {
+      "title": "ProductRequest",
+      "description": "Bespoke sourcing request submitted by a customer for items not in the catalog",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique request identifier"
+        },
+        "category": {
+          "type": "string",
+          "description": "Category of the product requested"
+        },
+        "characteristics": {
+          "type": "object",
+          "description": "Technical specifications map"
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description of the desired product"
+        },
+        "beContacted": {
+          "type": "boolean",
+          "description": "Whether the user wants to be notified when found"
+        },
+        "contactChannel": {
+          "type": "string",
+          "description": "Preferred notification method: email, phone, or whatsapp"
+        },
+        "contactValue": {
+          "type": "string",
+          "description": "Direct contact detail"
+        },
+        "desiredDelay": {
+          "type": "string",
+          "description": "Timeline preference for finding the item"
+        },
+        "desiredQuantity": {
+          "type": "number",
+          "description": "Quantity of item requested"
+        },
+        "country": {
+          "type": "string",
+          "description": "Shipping country destination"
+        },
+        "city": {
+          "type": "string",
+          "description": "Shipping city destination"
+        },
+        "estimatedBudget": {
+          "type": "number",
+          "description": "Estimated maximum budget"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Authenticated user identifier, or anonymous"
+        },
+        "userDisplayName": {
+          "type": "string",
+          "description": "User profile name or visitor label"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the request was registered"
+        },
+        "status": {
+          "type": "string",
+          "description": "Sourcing stage: En attente, Sourcing, Found, Closed"
+        },
+        "isBespokeRequest": {
+          "type": "boolean",
+          "description": "Indicates custom sourcing request"
+        }
+      },
+      "required": ["id", "category", "characteristics", "description", "beContacted", "desiredQuantity", "estimatedBudget", "userId", "status", "isBespokeRequest"]
     }
   },
   "firestore": {
@@ -211,6 +312,14 @@
     "site_config/{configId}": {
       "schema": "SiteConfig",
       "description": "Branding content, footer texts, and custom editable FAQs"
+    },
+    "promo_codes/{codeId}": {
+      "schema": "PromoCode",
+      "description": "Discount coupon keys with discount rates"
+    },
+    "product_requests/{requestId}": {
+      "schema": "ProductRequest",
+      "description": "Bespoke sourcing and search requests"
     }
   }
 }

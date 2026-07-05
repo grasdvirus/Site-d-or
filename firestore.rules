@@ -64,7 +64,7 @@ service cloud.firestore {
         && data.city is string && data.city.size() > 0 && data.city.size() <= 100
         && data.items is list && data.items.size() > 0 && data.items.size() <= 100
         && data.total is number && data.total >= 0
-        && data.createdAt == request.time
+        && data.createdAt is timestamp
         && (!('userId' in data) || (data.userId is string && data.userId.size() <= 128))
         && (!('zip' in data) || (data.zip is string && data.zip.size() <= 20))
         && (!('subtotal' in data) || (data.subtotal is number && data.subtotal >= 0))
@@ -80,7 +80,7 @@ service cloud.firestore {
         && data.comment is string && data.comment.size() > 0 && data.comment.size() <= 2000
         && (!('userId' in data) || (data.userId is string && data.userId.size() <= 128))
         && (!('userAvatar' in data) || (data.userAvatar is string && data.userAvatar.size() <= 1000))
-        && (!('createdAt' in data) || (data.createdAt == request.time));
+        && (!('createdAt' in data) || (data.createdAt is timestamp));
     }
 
     function isValidSiteConfig(data) {
@@ -95,6 +95,27 @@ service cloud.firestore {
         && (!('heroTitle' in data) || (data.heroTitle is string && data.heroTitle.size() <= 500))
         && (!('heroSub' in data) || (data.heroSub is string && data.heroSub.size() <= 500))
         && (!('heroDesc' in data) || (data.heroDesc is string && data.heroDesc.size() <= 2000));
+    }
+
+    function isValidProductRequest(data) {
+      return data.keys().hasAll(['id', 'category', 'characteristics', 'description', 'beContacted', 'desiredQuantity', 'estimatedBudget', 'userId', 'status', 'isBespokeRequest'])
+        && data.id is string && data.id.size() <= 128
+        && data.category is string && data.category.size() <= 100
+        && data.characteristics is map
+        && data.description is string && data.description.size() <= 10000
+        && data.beContacted is bool
+        && data.desiredQuantity is number && data.desiredQuantity >= 1
+        && data.estimatedBudget is number && data.estimatedBudget >= 0
+        && data.userId is string && data.userId.size() <= 128
+        && data.status is string && data.status.size() <= 100
+        && data.isBespokeRequest is bool
+        && (!('createdAt' in data) || (data.createdAt is timestamp))
+        && (!('contactChannel' in data) || (data.contactChannel is string && data.contactChannel.size() <= 50))
+        && (!('contactValue' in data) || (data.contactValue is string && data.contactValue.size() <= 200))
+        && (!('desiredDelay' in data) || (data.desiredDelay is string && data.desiredDelay.size() <= 100))
+        && (!('country' in data) || (data.country is string && data.country.size() <= 100))
+        && (!('city' in data) || (data.city is string && data.city.size() <= 100))
+        && (!('userDisplayName' in data) || (data.userDisplayName is string && data.userDisplayName.size() <= 150));
     }
 
     // -----------------------------------------------------------------
@@ -159,6 +180,31 @@ service cloud.firestore {
                     
       allow delete: if isAdmin() 
                     && isValidId(configId);
+    }
+
+    // Promo Codes collection: discount coupons
+    match /promo_codes/{codeId} {
+      allow get, list: if true; // Any visitor can check promo codes
+      
+      allow create, update: if isAdmin() && isValidId(codeId);
+      
+      allow delete: if isAdmin() && isValidId(codeId);
+    }
+
+    // Product Requests collection: custom bespoke search inquiries
+    match /product_requests/{requestId} {
+      allow get: if resource.data.userId == 'anonymous' 
+                 || (isSignedIn() && resource.data.userId == request.auth.uid)
+                 || isAdmin();
+                 
+      allow list: if (isSignedIn() && resource.data.userId == request.auth.uid)
+                  || isAdmin();
+                  
+      allow create: if isValidId(requestId)
+                    && isValidProductRequest(incoming())
+                    && (incoming().userId == 'anonymous' || (isSignedIn() && incoming().userId == request.auth.uid));
+                    
+      allow update, delete: if isAdmin() && isValidId(requestId);
     }
   }
 }

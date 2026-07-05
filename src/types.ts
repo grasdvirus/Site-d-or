@@ -19,3 +19,11 @@ export interface CartItem {
   selectedVariant?: string;
   quantity: number;
 }
+
+export interface PromoCode {
+  code: string;
+  discount: number;
+  description: string;
+  status: "active" | "planned";
+}
+

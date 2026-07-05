@@ -34,7 +34,9 @@ import {
   History,
   AlertTriangle,
   ArrowUp,
-  Star
+  Star,
+  Truck,
+  Award
 } from "lucide-react";
 
 import InteractiveModel from "./components/InteractiveModel";
@@ -43,8 +45,8 @@ import FAQ from "./components/FAQ";
 import AdminPortal from "./components/AdminPortal";
 import ReviewsCarousel from "./components/ReviewsCarousel";
 import { INITIAL_PRODUCTS } from "./data";
-import { Product, CartItem } from "./types";
-import { db, auth, googleProvider, signInWithPopup, signOut, handleFirestoreError, GoogleAuthProvider } from "./firebase";
+import { Product, CartItem, PromoCode } from "./types";
+import { db, auth, googleProvider, signInWithPopup, signOut, handleFirestoreError, GoogleAuthProvider, OperationType } from "./firebase";
 import { collection, query, getDocs, getDoc, doc, setDoc, deleteDoc, serverTimestamp, where, addDoc } from "firebase/firestore";
 import { TRANSLATIONS, Language, Theme, Currency, formatPrice, CURRENCIES } from "./translations";
 
@@ -122,6 +124,20 @@ export default function App() {
   const [activeDiscount, setActiveDiscount] = useState(0); // overall percentage discount
   const [appliedCodeName, setAppliedCodeName] = useState("");
   const [promoError, setPromoError] = useState("");
+  const [promoDropdownOpen, setPromoDropdownOpen] = useState(false);
+  const [ratingsDropdownOpen, setRatingsDropdownOpen] = useState(false);
+  const [ecologyDropdownOpen, setEcologyDropdownOpen] = useState(false);
+  const [warrantyDropdownOpen, setWarrantyDropdownOpen] = useState(false);
+  const [deliveryDropdownOpen, setDeliveryDropdownOpen] = useState(false);
+
+  // Dynamic promo codes list from Firestore (with fallbacks)
+  const [promoCodes, setPromoCodes] = useState<PromoCode[]>(() => {
+    return [
+      { code: "WELCOME10", discount: 10, description: "10% de réduction de bienvenue", status: "active" },
+      { code: "SUMMER20", discount: 20, description: "20% de réduction d'été", status: "active" },
+      { code: "WINTER15", discount: 15, description: "15% de réduction hivernale", status: "planned" }
+    ];
+  });
 
   // Checkout states
   const [checkoutStep, setCheckoutStep] = useState<"idle" | "form" | "confirm">("idle");
@@ -217,6 +233,27 @@ export default function App() {
       }
     };
     fetchSiteConfig();
+  }, [activeTab]);
+
+  // Sync promo codes dynamically from Firestore promo_codes collection
+  useEffect(() => {
+    const fetchPromoCodes = async () => {
+      try {
+        const q = query(collection(db, "promo_codes"));
+        const querySnapshot = await getDocs(q);
+        
+        if (!querySnapshot.empty) {
+          const loaded: PromoCode[] = [];
+          querySnapshot.forEach((docSnapshot) => {
+            loaded.push(docSnapshot.data() as PromoCode);
+          });
+          setPromoCodes(loaded);
+        }
+      } catch (err: any) {
+        console.warn("Firestore promo codes error or offline, keeping fallback:", err);
+      }
+    };
+    fetchPromoCodes();
   }, [activeTab]);
 
   // Sync user orders tracking history from Firestore
@@ -610,15 +647,71 @@ export default function App() {
   };
 
   // Promo operations
-  const handleApplyPromo = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (promoCodeInput.trim().toUpperCase() === "WELCOME10") {
-      setActiveDiscount(10);
-      setAppliedCodeName("WELCOME10 (-10%)");
-      setPromoError("");
-      setPromoCodeInput("");
+  const handleApplyPromo = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const typed = promoCodeInput.trim().toUpperCase();
+    if (!typed) return;
+
+    const found = promoCodes.find(p => p.code === typed);
+    if (found) {
+      if (found.status === "active") {
+        setActiveDiscount(found.discount);
+        setAppliedCodeName(`${found.code} (-${found.discount}%)`);
+        setPromoError("");
+        setPromoCodeInput("");
+      } else {
+        setPromoError(lang === "en" ? "This coupon code is not active yet." : "Ce code promo n'est pas encore activé.");
+      }
     } else {
-      setPromoError(lang === "en" ? "Invalid code. Use WELCOME10" : lang === "es" ? "Código no válido." : lang === "ar" ? "رمز ترويجي غير صحيح. استخدم WELCOME10" : "Code invalide. Utilisez WELCOME10");
+      if (typed === "WELCOME10") {
+        setActiveDiscount(10);
+        setAppliedCodeName("WELCOME10 (-10%)");
+        setPromoError("");
+        setPromoCodeInput("");
+      } else {
+        setPromoError(lang === "en" ? "Invalid code." : "Code de réduction invalide.");
+      }
+    }
+  };
+
+  const handleApplyPromoDirect = (promo: PromoCode) => {
+    if (promo.status === "active") {
+      setActiveDiscount(promo.discount);
+      setAppliedCodeName(`${promo.code} (-${promo.discount}%)`);
+      setPromoError("");
+    } else {
+      alert(lang === "en" ? "This coupon is planned and not yet active." : "Ce code est prévu et n'est pas encore actif.");
+    }
+  };
+
+  const handleAddPromoCode = async (newPromo: PromoCode) => {
+    const previousPromos = [...promoCodes];
+    const exists = promoCodes.some(p => p.code === newPromo.code);
+    if (exists) {
+      setPromoCodes(promoCodes.map(p => p.code === newPromo.code ? newPromo : p));
+    } else {
+      setPromoCodes([newPromo, ...promoCodes]);
+    }
+
+    try {
+      await setDoc(doc(db, "promo_codes", newPromo.code), newPromo);
+    } catch (err) {
+      console.error("Failed to save promo code to Firestore, reverting:", err);
+      setPromoCodes(previousPromos);
+      handleFirestoreError(err, OperationType.WRITE, `promo_codes/${newPromo.code}`);
+    }
+  };
+
+  const handleDeletePromoCode = async (code: string) => {
+    const previousPromos = [...promoCodes];
+    setPromoCodes(promoCodes.filter(p => p.code !== code));
+
+    try {
+      await deleteDoc(doc(db, "promo_codes", code));
+    } catch (err) {
+      console.error("Failed to delete promo code from Firestore, reverting:", err);
+      setPromoCodes(previousPromos);
+      handleFirestoreError(err, OperationType.DELETE, `promo_codes/${code}`);
     }
   };
 
@@ -902,6 +995,9 @@ export default function App() {
               customOptions={customOptions}
               onSaveCustomOptions={handleSaveCustomOptions}
               onSaveSiteConfig={setSiteConfig}
+              promoCodes={promoCodes}
+              onAddPromoCode={handleAddPromoCode}
+              onDeletePromoCode={handleDeletePromoCode}
             />
           </motion.div>
         ) : activeTab === "collection" ? (
@@ -989,28 +1085,598 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="flex items-center gap-5 pt-2 border-t border-slate-150 dark:border-slate-800">
-                  <div className="text-left font-sans">
-                    <div className="text-lg font-mono font-bold text-slate-900 dark:text-white">4.9/5</div>
-                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-slate-400">
+                <div className="mt-5 flex items-center gap-3 overflow-x-auto no-scrollbar scroll-smooth snap-x py-1.5 px-0.5">
+                  
+                  {/* Notes d'Ateliers action button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRatingsDropdownOpen(true);
+                      setEcologyDropdownOpen(false);
+                      setPromoDropdownOpen(false);
+                      setWarrantyDropdownOpen(false);
+                      setDeliveryDropdownOpen(false);
+                    }}
+                    className="flex flex-col items-start px-4 py-2.5 bg-white dark:bg-slate-900/60 border border-slate-150 dark:border-slate-800/85 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.03)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] hover:border-[#2d4a22]/30 dark:hover:border-emerald-500/30 hover:bg-slate-50 dark:hover:bg-slate-900 shrink-0 snap-start active:scale-97 transition-all duration-200 cursor-pointer text-left select-none group min-w-[135px]"
+                  >
+                    <div className="text-sm font-mono font-bold text-slate-900 dark:text-white flex items-center gap-1 leading-none">
+                      <span>4.9/5</span>
+                      <Star className="w-3 h-3 fill-amber-450 text-amber-450 shrink-0" />
+                    </div>
+                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-slate-400 mt-1">
                       {lang === 'en' ? "Atelier Ratings" : lang === 'es' ? "Notas del Taller" : lang === 'ar' ? "تقييم المشغل" : "Notes d'Ateliers"}
                     </div>
-                  </div>
-                  <div className="h-6 w-px bg-slate-200 dark:bg-slate-800"></div>
-                  <div className="text-left font-sans">
-                    <div className="text-lg font-mono font-bold text-slate-900 dark:text-white">100%</div>
-                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-slate-400">
+                  </button>
+
+                  {/* Ébénisterie FSC action button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEcologyDropdownOpen(true);
+                      setRatingsDropdownOpen(false);
+                      setPromoDropdownOpen(false);
+                      setWarrantyDropdownOpen(false);
+                      setDeliveryDropdownOpen(false);
+                    }}
+                    className="flex flex-col items-start px-4 py-2.5 bg-white dark:bg-slate-900/60 border border-slate-150 dark:border-slate-800/85 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.03)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] hover:border-[#2d4a22]/30 dark:hover:border-emerald-500/30 hover:bg-slate-50 dark:hover:bg-slate-900 shrink-0 snap-start active:scale-97 transition-all duration-200 cursor-pointer text-left select-none group min-w-[135px]"
+                  >
+                    <div className="text-sm font-mono font-bold text-emerald-700 dark:text-emerald-450 flex items-center gap-1 leading-none">
+                      <span>100%</span>
+                      <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-450 shrink-0 stroke-[2.5]" />
+                    </div>
+                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-slate-400 mt-1">
                       {lang === 'en' ? "FSC Joinery" : lang === 'es' ? "Especialismo FSC" : lang === 'ar' ? "نجارة فاخرة FSC" : "Ébénisterie FSC"}
                     </div>
-                  </div>
-                  <div className="h-6 w-px bg-slate-200 dark:bg-slate-800"></div>
-                  <div className="text-left">
-                    <div className="text-lg font-mono font-bold text-[#2d4a22] dark:text-emerald-450">WELCOME10</div>
-                    <div className="text-[9px] font-mono font-bold uppercase tracking-wide text-[#2d4a22] dark:text-emerald-450">
-                      {lang === 'en' ? "Code -10% Active" : lang === 'es' ? "Código -10% Activo" : lang === 'ar' ? "خصم ترويجي نشط -10%" : "Code -10% Active"}
+                  </button>
+
+                  {/* Codes Promos action button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPromoDropdownOpen(true);
+                      setRatingsDropdownOpen(false);
+                      setEcologyDropdownOpen(false);
+                      setWarrantyDropdownOpen(false);
+                      setDeliveryDropdownOpen(false);
+                    }}
+                    className="flex flex-col items-start px-4 py-2.5 bg-white dark:bg-slate-900/60 border border-slate-150 dark:border-slate-800/85 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.03)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] hover:border-[#2d4a22]/30 dark:hover:border-emerald-500/30 hover:bg-slate-50 dark:hover:bg-slate-900 shrink-0 snap-start active:scale-97 transition-all duration-200 cursor-pointer text-left select-none group min-w-[155px]"
+                  >
+                    <div className="text-sm font-mono font-bold text-[#2d4a22] dark:text-emerald-450 flex items-center gap-1.5 leading-none">
+                      <span>{promoCodes.filter(p => p.status === 'active').slice(0, 1).map(p => p.code).join(' • ') || "Promo"}</span>
+                      {appliedCodeName && (
+                        <span className="bg-[#2d4a22] text-white dark:bg-emerald-500 dark:text-slate-950 px-1 rounded text-[7px] font-sans font-normal lowercase first-letter:uppercase shrink-0">
+                          {appliedCodeName.split(" ")[0]}
+                        </span>
+                      )}
                     </div>
-                  </div>
+                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-[#2d4a22] dark:text-emerald-450 mt-1">
+                      Codes Promos
+                    </div>
+                  </button>
+
+                  {/* Garantie Atelier action button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWarrantyDropdownOpen(true);
+                      setPromoDropdownOpen(false);
+                      setRatingsDropdownOpen(false);
+                      setEcologyDropdownOpen(false);
+                      setDeliveryDropdownOpen(false);
+                    }}
+                    className="flex flex-col items-start px-4 py-2.5 bg-white dark:bg-slate-900/60 border border-slate-150 dark:border-slate-800/85 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.03)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] hover:border-[#2d4a22]/30 dark:hover:border-emerald-500/30 hover:bg-slate-50 dark:hover:bg-slate-900 shrink-0 snap-start active:scale-97 transition-all duration-200 cursor-pointer text-left select-none group min-w-[135px]"
+                  >
+                    <div className="text-sm font-mono font-bold text-[#2d4a22] dark:text-emerald-450 flex items-center gap-1.5 leading-none">
+                      <span>10 Ans</span>
+                      <Award className="w-3.5 h-3.5 text-[#2d4a22] dark:text-emerald-450 shrink-0" />
+                    </div>
+                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-[#2d4a22] dark:text-emerald-450 mt-1">
+                      {lang === 'en' ? "Guarantee" : lang === 'es' ? "Garantía" : lang === 'ar' ? "ضمان" : "Garantie Atelier"}
+                    </div>
+                  </button>
+
+                  {/* Livraison Premium action button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeliveryDropdownOpen(true);
+                      setPromoDropdownOpen(false);
+                      setRatingsDropdownOpen(false);
+                      setEcologyDropdownOpen(false);
+                      setWarrantyDropdownOpen(false);
+                    }}
+                    className="flex flex-col items-start px-4 py-2.5 bg-white dark:bg-slate-900/60 border border-slate-150 dark:border-slate-800/85 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.03)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] hover:border-[#2d4a22]/30 dark:hover:border-emerald-500/30 hover:bg-slate-50 dark:hover:bg-slate-900 shrink-0 snap-start active:scale-97 transition-all duration-200 cursor-pointer text-left select-none group min-w-[135px]"
+                  >
+                    <div className="text-sm font-mono font-bold text-[#2d4a22] dark:text-emerald-450 flex items-center gap-1.5 leading-none">
+                      <span>Premium</span>
+                      <Truck className="w-3.5 h-3.5 text-[#2d4a22] dark:text-emerald-450 shrink-0" />
+                    </div>
+                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-[#2d4a22] dark:text-emerald-450 mt-1">
+                      {lang === 'en' ? "Shipping" : lang === 'es' ? "Envío" : lang === 'ar' ? "شحن" : "Livraison"}
+                    </div>
+                  </button>
+
                 </div>
+
+                {/* Pop-up Modals with details */}
+
+                {/* Modal 1: Notes d'Ateliers */}
+                <AnimatePresence>
+                  {ratingsDropdownOpen && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                      {/* Dark backdrop */}
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setRatingsDropdownOpen(false)}
+                        className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+                      />
+                      
+                      {/* Modal Box */}
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                        transition={{ type: "spring", duration: 0.5 }}
+                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl shadow-2xl p-6 w-full max-w-md relative font-sans z-10"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setRatingsDropdownOpen(false)}
+                          className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer p-1.5 rounded-full hover:bg-slate-50 dark:hover:bg-slate-800"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+
+                        <div className="flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
+                          <span className="p-2 bg-amber-50 dark:bg-amber-950/30 rounded-xl">
+                            <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
+                          </span>
+                          <div>
+                            <h4 className="font-sans font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px] leading-tight">
+                              {lang === 'en' ? "Atelier Ratings" : "Statistiques des Évaluations"}
+                            </h4>
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-450 font-mono font-black">
+                              {lang === 'en' ? "Verified Client Reviews" : "Avis Clients Authentiques"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4 text-left">
+                          <div className="flex items-center gap-3">
+                            <span className="font-mono text-3xl font-black text-slate-900 dark:text-white">4.9/5</span>
+                            <div>
+                              <div className="flex text-amber-450 text-sm">
+                                <span>★</span><span>★</span><span>★</span><span>★</span><span>★</span>
+                              </div>
+                              <span className="text-[10px] text-slate-400 font-mono">(142 {lang === 'en' ? "verified reviews" : "avis vérifiés"})</span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2 border-t border-b border-slate-100 dark:border-slate-800 py-3">
+                            <div className="space-y-1.5">
+                              {/* Star bars */}
+                              <div className="flex items-center gap-2 text-xs font-mono">
+                                <span className="w-10">5 {lang === 'en' ? "stars" : "étoiles"}</span>
+                                <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                                  <div className="h-full bg-amber-450 rounded-full" style={{ width: "92%" }}></div>
+                                </div>
+                                <span className="w-8 text-right text-slate-400">92%</span>
+                              </div>
+                              <div className="flex items-center gap-2 text-xs font-mono">
+                                <span className="w-10">4 {lang === 'en' ? "stars" : "étoiles"}</span>
+                                <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                                  <div className="h-full bg-amber-450 rounded-full" style={{ width: "7%" }}></div>
+                                </div>
+                                <span className="w-8 text-right text-slate-400">7%</span>
+                              </div>
+                              <div className="flex items-center gap-2 text-xs font-mono">
+                                <span className="w-10">3 {lang === 'en' ? "stars" : "étoiles"}</span>
+                                <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                                  <div className="h-full bg-amber-450 rounded-full" style={{ width: "1%" }}></div>
+                                </div>
+                                <span className="w-8 text-right text-slate-400">1%</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                            {lang === 'en' 
+                              ? "Our clients emphasize our structural sturdiness, precision of assembly, and premium wood Selection. Each item is hand-finished in our atelier." 
+                              : "Nos clients soulignent la solidité structurelle exceptionnelle, la précision de nos assemblages et l'élégance intemporelle de nos bois. Chaque création est façonnée individuellement à la main."}
+                          </p>
+
+                          <div className="flex gap-2.5 pt-2">
+                            <button
+                              type="button"
+                              onClick={() => setRatingsDropdownOpen(false)}
+                              className="flex-1 text-center py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 rounded-xl transition-all cursor-pointer"
+                            >
+                              {lang === 'en' ? "Close" : "Fermer"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRatingsDropdownOpen(false);
+                                handleScrollToId("reviews-carousel");
+                              }}
+                              className="flex-1 text-center py-2.5 bg-[#2d4a22] hover:bg-[#3d5e30] dark:bg-emerald-600 dark:hover:bg-emerald-500 text-xs font-bold text-white dark:text-slate-950 rounded-xl transition-all cursor-pointer shadow-md"
+                            >
+                              {lang === 'en' ? "Read Reviews" : "Lire les avis"}
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    </div>
+                  )}
+                </AnimatePresence>
+
+                {/* Modal 2: Ébénisterie FSC */}
+                <AnimatePresence>
+                  {ecologyDropdownOpen && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                      {/* Dark backdrop */}
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setEcologyDropdownOpen(false)}
+                        className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+                      />
+                      
+                      {/* Modal Box */}
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                        transition={{ type: "spring", duration: 0.5 }}
+                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl shadow-2xl p-6 w-full max-w-md relative font-sans z-10"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setEcologyDropdownOpen(false)}
+                          className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer p-1.5 rounded-full hover:bg-slate-50 dark:hover:bg-slate-800"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+
+                        <div className="flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
+                          <span className="p-2 bg-emerald-50 dark:bg-emerald-950/30 rounded-xl">
+                            <Check className="w-5 h-5 text-emerald-600 dark:text-emerald-400 stroke-[3]" />
+                          </span>
+                          <div>
+                            <h4 className="font-sans font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px] leading-tight">
+                              {lang === 'en' ? "Eco-Commitment" : "Engagement Éco-Responsable"}
+                            </h4>
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-450 font-mono font-black">
+                              {lang === 'en' ? "100% FSC wood certified" : "Bois certifié FSC à 100%"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4 text-left">
+                          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                            {lang === 'en'
+                              ? "100% of our wood stems from European and local sustainable forests. Every trunk is selected with care, honoring forest biodiversity and renewal cycles."
+                              : "Tous nos bois proviennent de forêts européennes et locales éco-gérées. Chaque tronc est sélectionné avec soin, respectant la biodiversité et les cycles naturels de renouvellement."}
+                          </p>
+
+                          <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/60 space-y-2.5 text-xs">
+                            <div className="flex items-start gap-2.5">
+                              <span className="text-emerald-600 font-bold shrink-0 mt-0.5">✔</span>
+                              <div>
+                                <strong className="text-slate-800 dark:text-slate-200">{lang === 'en' ? "Noble Wood Essences" : "Essences nobles de bois"}</strong>
+                                <p className="text-[11px] text-slate-400 mt-0.5">{lang === 'en' ? "French Oak, Ash, and Walnut sourced sustainably" : "Chêne de Bourgogne, Frêne blanc et Noyer d'exception"}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-2.5">
+                              <span className="text-emerald-600 font-bold shrink-0 mt-0.5">✔</span>
+                              <div>
+                                <strong className="text-slate-800 dark:text-slate-200">{lang === 'en' ? "Zero chemical solvent" : "Zéro solvant chimique"}</strong>
+                                <p className="text-[11px] text-slate-400 mt-0.5">{lang === 'en' ? "Natural organic oils, beeswaxes, and plant-based finishes" : "Huiles et cires d'abeille biologiques 100% naturelles"}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-2.5">
+                              <span className="text-emerald-600 font-bold shrink-0 mt-0.5">✔</span>
+                              <div>
+                                <strong className="text-slate-800 dark:text-slate-200">{lang === 'en' ? "Local Circular Workshop" : "Fabrication Locale Circulaire"}</strong>
+                                <p className="text-[11px] text-slate-400 mt-0.5">{lang === 'en' ? "Handmade locally, significantly reducing our carbon footprint" : "Fabrication artisanale réduisant drastiquement l'empreinte carbone"}</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setEcologyDropdownOpen(false)}
+                            className="w-full text-center py-2.5 bg-[#2d4a22] hover:bg-[#3d5e30] dark:bg-emerald-600 dark:hover:bg-emerald-500 text-xs font-bold text-white dark:text-slate-950 rounded-xl transition-all cursor-pointer shadow-md"
+                          >
+                            {lang === 'en' ? "Understood" : "Compris"}
+                          </button>
+                        </div>
+                      </motion.div>
+                    </div>
+                  )}
+                </AnimatePresence>
+
+                {/* Modal 3: Promo Codes */}
+                <AnimatePresence>
+                  {promoDropdownOpen && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                      {/* Dark backdrop */}
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setPromoDropdownOpen(false)}
+                        className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+                      />
+                      
+                      {/* Modal Box */}
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                        transition={{ type: "spring", duration: 0.5 }}
+                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl shadow-2xl p-6 w-full max-w-md relative font-sans z-10"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setPromoDropdownOpen(false)}
+                          className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer p-1.5 rounded-full hover:bg-slate-50 dark:hover:bg-slate-800"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+
+                        <div className="flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
+                          <span className="p-2 bg-emerald-50 dark:bg-emerald-950/30 rounded-xl">
+                            <Tag className="w-5 h-5 text-[#2d4a22] dark:text-emerald-450" />
+                          </span>
+                          <div>
+                            <h4 className="font-sans font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px] leading-tight">
+                              {lang === 'en' ? "Promo Codes" : "Codes de réduction"}
+                            </h4>
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-450 font-mono font-black">
+                              {lang === 'en' ? "Select a code to apply" : "Sélectionnez un code à appliquer"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4 text-left">
+                          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                            {promoCodes.map((p) => {
+                              const isApplied = appliedCodeName.includes(p.code);
+                              return (
+                                <button
+                                  key={p.code}
+                                  type="button"
+                                  onClick={() => {
+                                    if (p.status === 'active') {
+                                      handleApplyPromoDirect(p);
+                                      setPromoDropdownOpen(false);
+                                    } else {
+                                      alert("Ce code est réservé/prévu pour plus tard.");
+                                    }
+                                  }}
+                                  className={`w-full text-left p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 cursor-pointer ${
+                                    isApplied
+                                      ? "bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-500 dark:border-emerald-400"
+                                      : p.status === 'active'
+                                        ? "bg-slate-50 hover:bg-slate-100 dark:bg-slate-950 dark:hover:bg-slate-850 border-slate-100 dark:border-slate-800"
+                                        : "bg-slate-100/50 dark:bg-slate-900/50 border-slate-100/50 dark:border-slate-800/50 opacity-60"
+                                  }`}
+                                >
+                                  <div className="min-w-0 flex-1 text-left">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-mono font-black text-slate-800 dark:text-slate-100 text-xs">{p.code}</span>
+                                      <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${
+                                        p.status === 'active'
+                                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-450"
+                                          : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-450"
+                                      }`}>
+                                        {p.status === 'active' ? `-${p.discount}%` : 'PRÉVU'}
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">{p.description}</p>
+                                  </div>
+                                  {isApplied && (
+                                    <span className="text-emerald-600 dark:text-emerald-450 shrink-0">
+                                      <Check className="w-4 h-4 stroke-[3]" />
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {appliedCodeName && (
+                            <div className="text-center pt-2.5 border-t border-slate-100 dark:border-slate-800">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveDiscount(0);
+                                  setAppliedCodeName("");
+                                  setPromoDropdownOpen(false);
+                                }}
+                                className="text-[10px] font-mono font-bold text-rose-500 hover:underline cursor-pointer"
+                              >
+                                Retirer le code appliqué
+                              </button>
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => setPromoDropdownOpen(false)}
+                            className="w-full text-center py-2.5 bg-[#2d4a22] hover:bg-[#3d5e30] dark:bg-emerald-600 dark:hover:bg-emerald-500 text-xs font-bold text-white dark:text-slate-950 rounded-xl transition-all cursor-pointer shadow-md"
+                          >
+                            {lang === 'en' ? "Close" : "Fermer"}
+                          </button>
+                        </div>
+                      </motion.div>
+                    </div>
+                  )}
+                </AnimatePresence>
+
+                {/* Modal 4: Garantie Atelier */}
+                <AnimatePresence>
+                  {warrantyDropdownOpen && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                      {/* Dark backdrop */}
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setWarrantyDropdownOpen(false)}
+                        className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+                      />
+                      
+                      {/* Modal Box */}
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                        transition={{ type: "spring", duration: 0.5 }}
+                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl shadow-2xl p-6 w-full max-w-md relative font-sans z-10"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setWarrantyDropdownOpen(false)}
+                          className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer p-1.5 rounded-full hover:bg-slate-50 dark:hover:bg-slate-800"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+
+                        <div className="flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
+                          <span className="p-2 bg-[#2d4a22]/10 rounded-xl">
+                            <Award className="w-5 h-5 text-[#2d4a22] dark:text-emerald-450" />
+                          </span>
+                          <div>
+                            <h4 className="font-sans font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px] leading-tight">
+                              {lang === 'en' ? "Workshop Guarantee" : "Garantie de l'Atelier"}
+                            </h4>
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-450 font-mono font-black">
+                              {lang === 'en' ? "10-Year Structural Coverage" : "Couverture structurelle de 10 ans"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4 text-left">
+                          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                            {lang === 'en'
+                              ? "Our premium, solid-wood and jointed pieces are designed to become family heirlooms. We stand behind our traditional craftsmanship."
+                              : "Nos pièces d'ébénisterie en bois massif sont conçues pour durer des générations. Nous garantissons notre savoir-faire artisanal traditionnel de haute précision."}
+                          </p>
+
+                          <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/60 space-y-2.5 text-xs">
+                            <div className="flex items-start gap-2.5">
+                              <span className="text-emerald-600 font-bold shrink-0 mt-0.5">✔</span>
+                              <div>
+                                <strong className="text-slate-800 dark:text-slate-200">{lang === 'en' ? "10-Year Sturdiness" : "Garantie 10 Ans Robustesse"}</strong>
+                                <p className="text-[11px] text-slate-400 mt-0.5">{lang === 'en' ? "Structural framework, wood splits, joinery and integrity" : "Châssis, assemblages traditionnels, fentes de bois et intégrité"}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-2.5">
+                              <span className="text-emerald-600 font-bold shrink-0 mt-0.5">✔</span>
+                              <div>
+                                <strong className="text-slate-800 dark:text-slate-200">{lang === 'en' ? "Lifelong Maintenance" : "Entretien à Vie"}</strong>
+                                <p className="text-[11px] text-slate-400 mt-0.5">{lang === 'en' ? "Repairs and re-oiling service available at cost price" : "Service de ponçage, huilage et réparation professionnelle au prix coûtant"}</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setWarrantyDropdownOpen(false)}
+                            className="w-full text-center py-2.5 bg-[#2d4a22] hover:bg-[#3d5e30] dark:bg-emerald-600 dark:hover:bg-emerald-500 text-xs font-bold text-white dark:text-slate-950 rounded-xl transition-all cursor-pointer shadow-md"
+                          >
+                            {lang === 'en' ? "Understood" : "Compris"}
+                          </button>
+                        </div>
+                      </motion.div>
+                    </div>
+                  )}
+                </AnimatePresence>
+
+                {/* Modal 5: Livraison Premium */}
+                <AnimatePresence>
+                  {deliveryDropdownOpen && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                      {/* Dark backdrop */}
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setDeliveryDropdownOpen(false)}
+                        className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+                      />
+                      
+                      {/* Modal Box */}
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                        transition={{ type: "spring", duration: 0.5 }}
+                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl shadow-2xl p-6 w-full max-w-md relative font-sans z-10"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setDeliveryDropdownOpen(false)}
+                          className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer p-1.5 rounded-full hover:bg-slate-50 dark:hover:bg-slate-800"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+
+                        <div className="flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
+                          <span className="p-2 bg-[#2d4a22]/10 rounded-xl">
+                            <Truck className="w-5 h-5 text-[#2d4a22] dark:text-emerald-450" />
+                          </span>
+                          <div>
+                            <h4 className="font-sans font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px] leading-tight">
+                              {lang === 'en' ? "Premium Delivery" : "Livraison d'Exception"}
+                            </h4>
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-450 font-mono font-black">
+                              {lang === 'en' ? "White-Glove In-Home Service" : "Service à domicile gants blancs"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4 text-left">
+                          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                            {lang === 'en'
+                              ? "We don't just drop off packages. Our white-glove transport team delivers to your room of choice, completely unpacks, and sets up your furniture."
+                              : "Vos meubles de créateurs méritent un transport irréprochable. Notre équipe livre dans la pièce de votre choix, déballe, et assemble soigneusement chaque meuble."}
+                          </p>
+
+                          <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/60 space-y-2.5 text-xs">
+                            <div className="flex items-start gap-2.5">
+                              <span className="text-emerald-600 font-bold shrink-0 mt-0.5">✔</span>
+                              <div>
+                                <strong className="text-slate-800 dark:text-slate-200">{lang === 'en' ? "Room of Choice" : "Pièce de Destination"}</strong>
+                                <p className="text-[11px] text-slate-400 mt-0.5">{lang === 'en' ? "Direct placement in living room, office, or dining room" : "Installation à l'emplacement exact de votre choix (étage inclus)"}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-2.5">
+                              <span className="text-emerald-600 font-bold shrink-0 mt-0.5">✔</span>
+                              <div>
+                                <strong className="text-slate-800 dark:text-slate-200">{lang === 'en' ? "Eco Waste Removal" : "Retrait des emballages"}</strong>
+                                <p className="text-[11px] text-slate-400 mt-0.5">{lang === 'en' ? "Complete packaging removal and immediate recycling" : "Nettoyage de l'espace et recyclage intégral des cartons et palettes de transport"}</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setDeliveryDropdownOpen(false)}
+                            className="w-full text-center py-2.5 bg-[#2d4a22] hover:bg-[#3d5e30] dark:bg-emerald-600 dark:hover:bg-emerald-500 text-xs font-bold text-white dark:text-slate-950 rounded-xl transition-all cursor-pointer shadow-md"
+                          >
+                            {lang === 'en' ? "Understood" : "Compris"}
+                          </button>
+                        </div>
+                      </motion.div>
+                    </div>
+                  )}
+                </AnimatePresence>
 
               </div>
 

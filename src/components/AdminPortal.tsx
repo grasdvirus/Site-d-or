@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { Lock, Unlock, Plus, Trash2, Edit2, Check, X, Tag, Layers, Coins, ChevronDown, ChevronUp, Image as ImageIcon, Sliders, CheckCircle2, AlertTriangle, Hammer, ShieldCheck, Box, UserCheck, Settings, HelpCircle, FileText, Globe, Mail, Send, Inbox, RefreshCw } from "lucide-react";
-import { Product } from "../types";
+import { Product, PromoCode } from "../types";
 import { db } from "../firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { formatPrice } from "../translations";
@@ -19,6 +20,9 @@ interface AdminPortalProps {
   customOptions?: Record<string, { label: string; values: string[] }[]>;
   onSaveCustomOptions?: (newMap: Record<string, { label: string; values: string[] }[]>) => void;
   onSaveSiteConfig?: (newConfig: any) => void;
+  promoCodes?: PromoCode[];
+  onAddPromoCode: (promo: PromoCode) => Promise<void>;
+  onDeletePromoCode: (code: string) => Promise<void>;
 }
 
 export default function AdminPortal({ 
@@ -34,13 +38,22 @@ export default function AdminPortal({
   onDeleteOrder,
   customOptions = {},
   onSaveCustomOptions,
-  onSaveSiteConfig
+  onSaveSiteConfig,
+  promoCodes = [],
+  onAddPromoCode,
+  onDeletePromoCode
 }: AdminPortalProps) {
   // Authentication state
   const [localAuthenticated, setLocalAuthenticated] = useState(false);
   const [prefillEmail, setPrefillEmail] = useState<{to: string, subject: string, body: string} | null>(null);
   const [passcode, setPasscode] = useState("");
   const [authError, setAuthError] = useState("");
+
+  // Product requests (bespoke simulator requests)
+  const [productRequests, setProductRequests] = useState<any[]>([]);
+  const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
+  const [isLoadingRequests, setIsLoadingRequests] = useState(false);
+  const [deletingRequestId, setDeletingRequestId] = useState<string | null>(null);
   
   // Product edition / creation form states
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -119,7 +132,7 @@ export default function AdminPortal({
   };
 
   // Site dynamic configuration editing states
-  const [activeSubTab, setActiveSubTab] = useState<"catalog" | "site_config" | "categories" | "orders" | "bespoke" | "custom_options">("catalog");
+  const [activeSubTab, setActiveSubTab] = useState<"catalog" | "site_config" | "categories" | "orders" | "bespoke" | "custom_options" | "action_buttons">("catalog");
   
   // Custom Options customizer states in AdminPortal
   const [targetCustomProductId, setTargetCustomProductId] = useState<string>("");
@@ -208,12 +221,42 @@ export default function AdminPortal({
   const [heroDesc, setHeroDesc] = useState("");
   const [faqs, setFaqs] = useState<{ question: string; answer: string }[]>([]);
 
+  // Action Buttons states
+  const [btnCta1Text, setBtnCta1Text] = useState("Découvrir la Collection");
+  const [btnCta1TextEn, setBtnCta1TextEn] = useState("Discover the Collection");
+  const [btnCta1Target, setBtnCta1Target] = useState("pricing-plans");
+  const [btnCta1Style, setBtnCta1Style] = useState("primary");
+  const [btnCta1Active, setBtnCta1Active] = useState(true);
+
+  const [btnCta2Text, setBtnCta2Text] = useState("Configurer à l'Atelier");
+  const [btnCta2TextEn, setBtnCta2TextEn] = useState("Start Customizing");
+  const [btnCta2Target, setBtnCta2Target] = useState("interactive-model-sandbox");
+  const [btnCta2Style, setBtnCta2Style] = useState("outline");
+  const [btnCta2Active, setBtnCta2Active] = useState(true);
+
+  const [btnCta3Text, setBtnCta3Text] = useState("Envoyer ma demande");
+  const [btnCta3TextEn, setBtnCta3TextEn] = useState("Submit Custom Request");
+  const [btnCta3Active, setBtnCta3Active] = useState(true);
+
+  const [btnCta4Text, setBtnCta4Text] = useState("Demander une création");
+  const [btnCta4TextEn, setBtnCta4TextEn] = useState("Request Free Bespoke");
+  const [btnCta4Active, setBtnCta4Active] = useState(true);
+
   // FAQ input state
   const [newQuestion, setNewQuestion] = useState("");
   const [newAnswer, setNewAnswer] = useState("");
 
   // New Category creator state
   const [newCategoryName, setNewCategoryName] = useState("");
+
+  // New Promo Code creator state
+  const [newPromoCode, setNewPromoCode] = useState("");
+  const [newPromoDiscount, setNewPromoDiscount] = useState("");
+  const [newPromoDescription, setNewPromoDescription] = useState("");
+  const [newPromoStatus, setNewPromoStatus] = useState<"active" | "planned">("active");
+  const [isSavingPromo, setIsSavingPromo] = useState(false);
+  const [deletingPromoCode, setDeletingPromoCode] = useState<string | null>(null);
+  const [confirmDeletePromoCode, setConfirmDeletePromoCode] = useState<string | null>(null);
 
   // Local image upload dragging state
   const [imageDragging, setImageDragging] = useState(false);
@@ -255,6 +298,26 @@ export default function AdminPortal({
             setHeroSub(data.heroSub || "");
             setHeroDesc(data.heroDesc || "");
             if (data.faqs) setFaqs(data.faqs);
+
+            setBtnCta1Text(data.btnCta1Text ?? "Découvrir la Collection");
+            setBtnCta1TextEn(data.btnCta1TextEn ?? "Discover the Collection");
+            setBtnCta1Target(data.btnCta1Target ?? "pricing-plans");
+            setBtnCta1Style(data.btnCta1Style ?? "primary");
+            setBtnCta1Active(data.btnCta1Active ?? true);
+
+            setBtnCta2Text(data.btnCta2Text ?? "Configurer à l'Atelier");
+            setBtnCta2TextEn(data.btnCta2TextEn ?? "Start Customizing");
+            setBtnCta2Target(data.btnCta2Target ?? "interactive-model-sandbox");
+            setBtnCta2Style(data.btnCta2Style ?? "outline");
+            setBtnCta2Active(data.btnCta2Active ?? true);
+
+            setBtnCta3Text(data.btnCta3Text ?? "Envoyer ma demande");
+            setBtnCta3TextEn(data.btnCta3TextEn ?? "Submit Custom Request");
+            setBtnCta3Active(data.btnCta3Active ?? true);
+
+            setBtnCta4Text(data.btnCta4Text ?? "Demander une création");
+            setBtnCta4TextEn(data.btnCta4TextEn ?? "Request Free Bespoke");
+            setBtnCta4Active(data.btnCta4Active ?? true);
           } catch (e) {
             console.warn("Stale config in local storage:", e);
           }
@@ -275,6 +338,27 @@ export default function AdminPortal({
           } else if (data.faq) {
             setFaqs(data.faq);
           }
+
+          setBtnCta1Text(data.btnCta1Text ?? "Découvrir la Collection");
+          setBtnCta1TextEn(data.btnCta1TextEn ?? "Discover the Collection");
+          setBtnCta1Target(data.btnCta1Target ?? "pricing-plans");
+          setBtnCta1Style(data.btnCta1Style ?? "primary");
+          setBtnCta1Active(data.btnCta1Active ?? true);
+
+          setBtnCta2Text(data.btnCta2Text ?? "Configurer à l'Atelier");
+          setBtnCta2TextEn(data.btnCta2TextEn ?? "Start Customizing");
+          setBtnCta2Target(data.btnCta2Target ?? "interactive-model-sandbox");
+          setBtnCta2Style(data.btnCta2Style ?? "outline");
+          setBtnCta2Active(data.btnCta2Active ?? true);
+
+          setBtnCta3Text(data.btnCta3Text ?? "Envoyer ma demande");
+          setBtnCta3TextEn(data.btnCta3TextEn ?? "Submit Custom Request");
+          setBtnCta3Active(data.btnCta3Active ?? true);
+
+          setBtnCta4Text(data.btnCta4Text ?? "Demander une création");
+          setBtnCta4TextEn(data.btnCta4TextEn ?? "Request Free Bespoke");
+          setBtnCta4Active(data.btnCta4Active ?? true);
+
           // Sync back to localStorage
           localStorage.setItem("site_config_general", JSON.stringify(data));
         } else if (!localCopy) {
@@ -301,6 +385,108 @@ export default function AdminPortal({
     };
     fetchConfig();
   }, []);
+
+  // Synchroniser les demandes sur-mesure (product_requests)
+  useEffect(() => {
+    const isAdminUser = currentUser?.email === "grasdvirus@gmail.com" || localAuthenticated;
+    if (!isAdminUser || activeSubTab !== "bespoke") {
+      return;
+    }
+    const fetchRequests = async () => {
+      try {
+        setIsLoadingRequests(true);
+        const { getDocs, collection, query } = await import("firebase/firestore");
+        const q = query(collection(db, "product_requests"));
+        const snap = await getDocs(q);
+        const fetched: any[] = [];
+        snap.forEach((docSnap) => {
+          fetched.push({ ...docSnap.data(), id: docSnap.id });
+        });
+        
+        // Trier par date décroissante (les plus récents en premier)
+        fetched.sort((a, b) => {
+          const timeA = a.createdAt?.seconds || (a.createdAt ? new Date(a.createdAt).getTime() / 1000 : 0);
+          const timeB = b.createdAt?.seconds || (b.createdAt ? new Date(b.createdAt).getTime() / 1000 : 0);
+          return timeB - timeA;
+        });
+        setProductRequests(fetched);
+      } catch (err) {
+        console.error("Failed to fetch product_requests:", err);
+      } finally {
+        setIsLoadingRequests(false);
+      }
+    };
+    fetchRequests();
+  }, [currentUser, localAuthenticated, activeSubTab]);
+
+  const handleToggleRequestViewed = async (req: any, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      const { doc, updateDoc } = await import("firebase/firestore");
+      const nextViewed = !req.viewed;
+      const nextStatus = nextViewed ? "Vue" : "En attente d'attribution";
+      await updateDoc(doc(db, "product_requests", req.id), {
+        viewed: nextViewed,
+        status: nextStatus
+      });
+      setProductRequests((prev) =>
+        prev.map((r) =>
+          r.id === req.id
+            ? { ...r, viewed: nextViewed, status: nextStatus }
+            : r
+        )
+      );
+      if (selectedRequest?.id === req.id) {
+        setSelectedRequest((prev: any) => prev ? { ...prev, viewed: nextViewed, status: nextStatus } : null);
+      }
+    } catch (err) {
+      console.error("Failed to toggle viewed status:", err);
+    }
+  };
+
+  const handleOpenRequest = async (req: any) => {
+    setSelectedRequest(req);
+    // Auto-mark as viewed if not already marked
+    if (!req.viewed) {
+      try {
+        const { doc, updateDoc } = await import("firebase/firestore");
+        await updateDoc(doc(db, "product_requests", req.id), {
+          viewed: true,
+          status: "Vue"
+        });
+        setProductRequests((prev) =>
+          prev.map((r) =>
+            r.id === req.id
+              ? { ...r, viewed: true, status: "Vue" }
+              : r
+          )
+        );
+      } catch (err) {
+        console.error("Failed to auto-mark as viewed:", err);
+      }
+    }
+  };
+
+  const handleDeleteRequest = async (reqId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!window.confirm("Voulez-vous vraiment supprimer définitivement cette demande sur-mesure ?")) {
+      return;
+    }
+    try {
+      setDeletingRequestId(reqId);
+      const { doc, deleteDoc } = await import("firebase/firestore");
+      await deleteDoc(doc(db, "product_requests", reqId));
+      setProductRequests((prev) => prev.filter((r) => r.id !== reqId));
+      if (selectedRequest?.id === reqId) {
+        setSelectedRequest(null);
+      }
+    } catch (err) {
+      console.error("Failed to delete product_request:", err);
+      alert("Erreur lors de la suppression de la demande.");
+    } finally {
+      setDeletingRequestId(null);
+    }
+  };
 
   const handleLocalSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -686,6 +872,55 @@ export default function AdminPortal({
       alert("Erreur lors de la modification de la catégorie : " + (err instanceof Error ? err.message : String(err)));
     } finally {
       setIsSavingCategory(false);
+    }
+  };
+
+  const handleCreatePromoCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanCode = newPromoCode.trim().toUpperCase();
+    const discountNum = Number(newPromoDiscount);
+    if (!cleanCode) {
+      alert("Le code promo ne peut pas être vide.");
+      return;
+    }
+    if (isNaN(discountNum) || discountNum <= 0 || discountNum > 100) {
+      alert("Le pourcentage de réduction doit être compris entre 1 et 100.");
+      return;
+    }
+    
+    try {
+      setIsSavingPromo(true);
+      await onAddPromoCode({
+        code: cleanCode,
+        discount: discountNum,
+        description: newPromoDescription.trim() || `${discountNum}% de réduction`,
+        status: newPromoStatus
+      });
+      setNewPromoCode("");
+      setNewPromoDiscount("");
+      setNewPromoDescription("");
+      setNewPromoStatus("active");
+      setNotifMessage(`Le code promo "${cleanCode}" a été enregistré avec succès !`);
+      setTimeout(() => setNotifMessage(""), 4000);
+    } catch (err) {
+      console.error("Failed to add promo code:", err);
+      alert("Une erreur s'est produite lors de l'enregistrement du code promo.");
+    } finally {
+      setIsSavingPromo(false);
+    }
+  };
+
+  const handleDeletePromoCode = async (code: string) => {
+    try {
+      setDeletingPromoCode(code);
+      await onDeletePromoCode(code);
+      setNotifMessage(`Le code promo "${code}" a été supprimé.`);
+      setTimeout(() => setNotifMessage(""), 4000);
+    } catch (err) {
+      console.error("Failed to delete promo code:", err);
+      alert("Une erreur s'est produite lors de la suppression du code promo.");
+    } finally {
+      setDeletingPromoCode(null);
     }
   };
 
@@ -1329,201 +1564,403 @@ export default function AdminPortal({
         </div>
       ) : activeSubTab === "categories" ? (
         
-        /* CATEGORY MANAGEMENT SECTION */
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        /* CATEGORIES AND PROMO CODES MANAGEMENT SECTION */
+        <div className="space-y-8 animate-fadeIn text-left">
           
-          <form 
-            onSubmit={handleCreateCategory}
-            className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-4 text-left sleek-shadow-md"
-          >
-            <div className="border-b border-slate-101 dark:border-slate-800 pb-3 block">
-              <h3 className="font-sans font-bold text-slate-800 dark:text-white text-base tracking-tight flex items-center gap-2">
-                <Tag className="w-5 h-5 text-[#2d4a22]" />
-                Ajouter une Nouvelle Catégorie
+          {/* CATEGORIES CONTAINER */}
+          <div className="space-y-4">
+            <div className="border-b border-slate-100 dark:border-slate-800 pb-2">
+              <h3 className="font-sans font-black text-sm uppercase tracking-wider text-[#2d4a22] dark:text-emerald-400">
+                Gestion des Catégories
               </h3>
-              <p className="text-[11px] text-slate-400 mt-1">Créez une catégorie de mobilier sur-mesure pour classifier vos futures créations.</p>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Intitulé de la catégorie</label>
-              <input 
-                type="text" 
-                required
-                placeholder="ex : Canapés, Buffets, Luminaires..." 
-                value={newCategoryName}
-                onChange={(e) => setNewCategoryName(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-100 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
-              />
-            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              
+              <form 
+                onSubmit={handleCreateCategory}
+                className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-4 text-left sleek-shadow-md"
+              >
+                <div className="border-b border-slate-101 dark:border-slate-800 pb-3 block">
+                  <h4 className="font-sans font-bold text-slate-800 dark:text-white text-xs uppercase tracking-wider flex items-center gap-1.5">
+                    <Plus className="w-4 h-4 text-[#2d4a22]" />
+                    Ajouter une Nouvelle Catégorie
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-1">Créez une catégorie de mobilier sur-mesure pour classifier vos futures créations.</p>
+                </div>
 
-            <button
-              type="submit"
-              disabled={isSavingCategory}
-              className="w-full py-3.5 bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-sm cursor-pointer flex items-center justify-center gap-2 disabled:opacity-75"
-            >
-              {isSavingCategory ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  <span>Enregistrement en cours...</span>
-                </>
-              ) : (
-                <span>Enregistrer la catégorie de meuble</span>
-              )}
-            </button>
-          </form>
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Intitulé de la catégorie</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="ex : Canapés, Buffets, Luminaires..." 
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-805 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs text-slate-850 dark:text-slate-100 outline-none transition-colors"
+                  />
+                </div>
 
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-4 text-left sleek-shadow-md">
-            <div className="border-b border-slate-101 dark:border-slate-800 pb-3 block">
-              <h3 className="font-sans font-bold text-slate-800 dark:text-white text-base tracking-tight flex items-center gap-2">
-                <Layers className="w-5 h-5 text-[#2d4a22]" />
-                Catégories de Meubles en Vigueur
-              </h3>
-              <p className="text-[11px] text-slate-400 mt-1">Liste des filtres de catégories activés pour l'utilisateur dans l'Atelier.</p>
-            </div>
+                <button
+                  type="submit"
+                  disabled={isSavingCategory}
+                  className="w-full py-3.5 bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-sm cursor-pointer flex items-center justify-center gap-2 disabled:opacity-75"
+                >
+                  {isSavingCategory ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>Enregistrement en cours...</span>
+                    </>
+                  ) : (
+                    <span>Enregistrer la catégorie de meuble</span>
+                  )}
+                </button>
+              </form>
 
-            <div className="space-y-2">
-              {categories.map((cat) => {
-                const associatedCount = products.filter(p => p.category === cat).length;
-                const isEditing = editingCategory === cat;
-                return (
-                  <div 
-                    key={cat}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-50/50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800/85 hover:bg-white dark:hover:bg-slate-900 transition-all gap-3 shadow-sm"
-                  >
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className="w-8 h-8 rounded-xl bg-[#2d4a22]/5 dark:bg-[#2d4a22]/15 flex items-center justify-center text-[#2d4a22] dark:text-emerald-450 shrink-0 select-none">
-                        <Tag className="w-4 h-4" />
-                      </div>
+              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-4 text-left sleek-shadow-md">
+                <div className="border-b border-slate-101 dark:border-slate-800 pb-3 block">
+                  <h4 className="font-sans font-bold text-slate-800 dark:text-white text-xs uppercase tracking-wider flex items-center gap-1.5">
+                    <Layers className="w-4 h-4 text-[#2d4a22]" />
+                    Catégories de Meubles en Vigueur
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-1">Liste des filtres de catégories activés pour l'utilisateur dans l'Atelier.</p>
+                </div>
 
-                      <div className="flex-1 min-w-0">
-                        {isEditing ? (
-                          <form
-                            onSubmit={(e) => {
-                              e.preventDefault();
-                              handleUpdateCategory(cat, editingCategoryValue);
-                            }}
-                            className="flex items-center gap-2 w-full"
-                          >
-                            <input
-                              type="text"
-                              required
-                              value={editingCategoryValue}
-                              onChange={(e) => setEditingCategoryValue(e.target.value)}
-                              className="text-xs px-2.5 py-1.5 border border-slate-200 focus:border-[#2d4a22] focus:bg-white dark:border-slate-755 rounded-lg w-full font-bold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 outline-none focus:ring-1 focus:ring-[#2d4a22]"
-                              placeholder="Nom de la catégorie"
-                              autoFocus
-                              disabled={isSavingCategory}
-                            />
-                          </form>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-slate-700 dark:text-slate-200 block truncate">{cat}</span>
-                            <span className="text-[9px] font-mono font-bold bg-[#2d4a22]/5 dark:bg-[#2d4a22]/15 text-[#2d4a22] dark:text-emerald-400 px-2 py-0.5 rounded-full select-none">
-                              {associatedCount} meuble{associatedCount > 1 ? "s" : ""}
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                  {categories.map((cat) => {
+                    const associatedCount = products.filter(p => p.category === cat).length;
+                    const isEditing = editingCategory === cat;
+                    return (
+                      <div 
+                        key={cat}
+                        className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-50/50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800/85 hover:bg-white dark:hover:bg-slate-900 transition-all gap-3 shadow-sm"
+                      >
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className="w-8 h-8 rounded-xl bg-[#2d4a22]/5 dark:bg-[#2d4a22]/15 flex items-center justify-center text-[#2d4a22] dark:text-emerald-450 shrink-0 select-none">
+                            <Tag className="w-4 h-4" />
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            {isEditing ? (
+                              <form
+                                onSubmit={(e) => {
+                                  e.preventDefault();
+                                  handleUpdateCategory(cat, editingCategoryValue);
+                                }}
+                                className="flex items-center gap-2 w-full"
+                              >
+                                <input
+                                  type="text"
+                                  required
+                                  value={editingCategoryValue}
+                                  onChange={(e) => setEditingCategoryValue(e.target.value)}
+                                  className="text-xs px-2.5 py-1.5 border border-slate-200 focus:border-[#2d4a22] focus:bg-white dark:border-slate-755 rounded-lg w-full font-bold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 outline-none focus:ring-1 focus:ring-[#2d4a22]"
+                                  placeholder="Nom de la catégorie"
+                                  autoFocus
+                                  disabled={isSavingCategory}
+                                />
+                              </form>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-slate-700 dark:text-slate-200 block truncate">{cat}</span>
+                                <span className="text-[9px] font-mono font-bold bg-[#2d4a22]/5 dark:bg-[#2d4a22]/15 text-[#2d4a22] dark:text-emerald-400 px-2 py-0.5 rounded-full select-none">
+                                  {associatedCount} meuble{associatedCount > 1 ? "s" : ""}
+                                </span>
+                              </div>
+                            )}
+                            <span className="text-[9px] text-slate-400 block mt-0.5 select-none">
+                              {isEditing ? "Appuyez sur Entrée pour valider" : "Filtre actif de l'Atelier"}
                             </span>
                           </div>
-                        )}
-                        <span className="text-[9px] text-slate-400 block mt-0.5 select-none">
-                          {isEditing ? "Appuyez sur Entrée pour valider" : "Filtre actif de l'Atelier"}
-                        </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0 justify-end">
+                          {isEditing ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={isSavingCategory}
+                                onClick={() => handleUpdateCategory(cat, editingCategoryValue)}
+                                className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-all flex items-center justify-center min-w-[30px] h-[30px] cursor-pointer disabled:opacity-50"
+                                title="Valider"
+                              >
+                                {isSavingCategory ? (
+                                  <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                ) : (
+                                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isSavingCategory}
+                                onClick={() => {
+                                  setEditingCategory(null);
+                                  setEditingCategoryValue("");
+                                }}
+                                className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 dark:bg-slate-800 dark:hover:bg-slate-750 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[30px] h-[30px] cursor-pointer"
+                                title="Annuler"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          ) : confirmDeleteCat === cat ? (
+                            <div className="flex items-center gap-1.5 animate-fadeIn p-1.5 bg-rose-50/50 dark:bg-rose-950/15 rounded-xl border border-rose-100/70 dark:border-rose-900/40">
+                              <span className="text-[10px] font-bold text-rose-650 dark:text-rose-400 font-mono px-2 block select-none">
+                                {associatedCount > 0 ? `Effacer (${associatedCount} liés) ?` : "Vraiment supprimer ?"}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={deletingCategory === cat}
+                                onClick={async () => {
+                                  try {
+                                    await handleDeleteCategory(cat, true);
+                                  } finally {
+                                    setConfirmDeleteCat(null);
+                                  }
+                                }}
+                                className="p-1 bg-rose-650 hover:bg-rose-700 text-white rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer shadow-sm"
+                                title="Confirmer la suppression"
+                              >
+                                {deletingCategory === cat ? (
+                                  <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                ) : (
+                                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteCat(null)}
+                                className="p-1 bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer"
+                                title="Annuler"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                disabled={deletingCategory !== null}
+                                onClick={() => {
+                                  setEditingCategory(cat);
+                                  setEditingCategoryValue(cat);
+                                }}
+                                className="p-1.5 bg-slate-100/95 hover:bg-[#2d4a22] text-slate-600 hover:text-white dark:bg-slate-800 dark:hover:bg-[#2d4a22] dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer shadow-sm"
+                                title="Modifier"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={deletingCategory === cat}
+                                onClick={() => setConfirmDeleteCat(cat)}
+                                className="p-1.5 bg-rose-50 hover:bg-rose-600 text-rose-500 hover:text-white dark:bg-rose-950/20 dark:hover:bg-rose-900 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer shadow-sm"
+                                title="Supprimer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <hr className="border-slate-100 dark:border-slate-800/80 my-8" />
+
+          {/* PROMO CODES CONTAINER */}
+          <div className="space-y-4">
+            <div className="border-b border-slate-100 dark:border-slate-800 pb-2 flex items-center justify-between">
+              <h3 className="font-sans font-black text-sm uppercase tracking-wider text-[#2d4a22] dark:text-emerald-450">
+                Gestion des Codes de Réduction
+              </h3>
+              <span className="text-[10px] font-mono font-bold bg-[#2d4a22]/5 dark:bg-[#2d4a22]/15 text-[#2d4a22] dark:text-emerald-450 px-2.5 py-1 rounded-full">
+                {promoCodes.length} code{promoCodes.length > 1 ? "s" : ""} au total
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              
+              <form 
+                onSubmit={handleCreatePromoCode}
+                className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-4 text-left sleek-shadow-md"
+              >
+                <div className="border-b border-slate-101 dark:border-slate-800 pb-3 block">
+                  <h4 className="font-sans font-bold text-slate-800 dark:text-white text-xs uppercase tracking-wider flex items-center gap-1.5">
+                    <Plus className="w-4 h-4 text-[#2d4a22]" />
+                    Ajouter un Code de Réduction
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Configurez un nouveau coupon de réduction utilisable par les clients.
+                  </p>
+                </div>
+
+                <div className="space-y-3.5 text-left">
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">Code (ex: SPECIAL20) *</label>
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="NOMDUCODE" 
+                      value={newPromoCode}
+                      onChange={(e) => setNewPromoCode(e.target.value.toUpperCase())}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-805 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs text-slate-850 dark:text-slate-100 outline-none transition-colors"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3.5">
+                    <div className="space-y-1 text-left">
+                      <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">Réduction (%) *</label>
+                      <input 
+                        type="number" 
+                        required
+                        min="1"
+                        max="100"
+                        placeholder="ex: 15" 
+                        value={newPromoDiscount}
+                        onChange={(e) => setNewPromoDiscount(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-805 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs text-slate-850 dark:text-slate-100 outline-none transition-colors"
+                      />
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0 justify-end">
-                      {isEditing ? (
-                        <>
-                          <button
-                            type="button"
-                            disabled={isSavingCategory}
-                            onClick={() => handleUpdateCategory(cat, editingCategoryValue)}
-                            className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-all flex items-center justify-center min-w-[30px] h-[30px] cursor-pointer disabled:opacity-50"
-                            title="Valider"
-                          >
-                            {isSavingCategory ? (
-                              <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                            ) : (
-                              <Check className="w-3.5 h-3.5 stroke-[3]" />
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isSavingCategory}
-                            onClick={() => {
-                              setEditingCategory(null);
-                              setEditingCategoryValue("");
-                            }}
-                            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 dark:bg-slate-800 dark:hover:bg-slate-750 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[30px] h-[30px] cursor-pointer"
-                            title="Annuler"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </>
-                      ) : confirmDeleteCat === cat ? (
-                        <div className="flex items-center gap-1.5 animate-fadeIn p-1.5 bg-rose-50/50 dark:bg-rose-950/15 rounded-xl border border-rose-100/70 dark:border-rose-900/40">
-                          <span className="text-[10px] font-bold text-rose-650 dark:text-rose-400 font-mono px-2 block select-none">
-                            {associatedCount > 0 ? `Effacer (${associatedCount} liés) ?` : "Vraiment supprimer ?"}
-                          </span>
-                          <button
-                            type="button"
-                            disabled={deletingCategory === cat}
-                            onClick={async () => {
-                              try {
-                                await handleDeleteCategory(cat, true);
-                              } finally {
-                                setConfirmDeleteCat(null);
-                              }
-                            }}
-                            className="p-1 bg-rose-650 hover:bg-rose-700 text-white rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer shadow-sm"
-                            title="Confirmer la suppression"
-                          >
-                            {deletingCategory === cat ? (
-                              <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                            ) : (
-                              <Check className="w-3.5 h-3.5 stroke-[3]" />
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteCat(null)}
-                            className="p-1 bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer"
-                            title="Annuler"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            disabled={deletingCategory !== null}
-                            onClick={() => {
-                              setEditingCategory(cat);
-                              setEditingCategoryValue(cat);
-                            }}
-                            className="p-1.5 bg-slate-100/95 hover:bg-[#2d4a22] text-slate-600 hover:text-white dark:bg-slate-800 dark:hover:bg-[#2d4a22] dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer shadow-sm"
-                            title="Modifier"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={deletingCategory === cat}
-                            onClick={() => setConfirmDeleteCat(cat)}
-                            className="p-1.5 bg-rose-50 hover:bg-rose-600 text-rose-500 hover:text-white dark:bg-rose-950/20 dark:hover:bg-rose-900 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer shadow-sm"
-                            title="Supprimer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </>
-                      )}
+                    <div className="space-y-1 text-left">
+                      <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">Statut *</label>
+                      <select 
+                        value={newPromoStatus}
+                        onChange={(e) => setNewPromoStatus(e.target.value as "active" | "planned")}
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-101 dark:border-slate-805 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none transition-colors"
+                      >
+                        <option value="active">Actif (Utilisable)</option>
+                        <option value="planned">Prévu (Bientôt)</option>
+                      </select>
                     </div>
                   </div>
-                );
-              })}
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">Description descriptive (ex: -15% Hiver)</label>
+                    <input 
+                      type="text" 
+                      placeholder="15% de réduction sur tout le catalogue" 
+                      value={newPromoDescription}
+                      onChange={(e) => setNewPromoDescription(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-805 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs text-slate-850 dark:text-slate-100 outline-none transition-colors"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSavingPromo}
+                  className="w-full py-3.5 bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-sm cursor-pointer flex items-center justify-center gap-2 disabled:opacity-75 mt-2"
+                >
+                  {isSavingPromo ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>Sauvegarde en cours...</span>
+                    </>
+                  ) : (
+                    <span>Créer le Code de Réduction</span>
+                  )}
+                </button>
+              </form>
+
+              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-4 text-left sleek-shadow-md">
+                <div className="border-b border-slate-101 dark:border-slate-800 pb-3 block">
+                  <h4 className="font-sans font-bold text-slate-800 dark:text-white text-xs uppercase tracking-wider flex items-center gap-1.5">
+                    <Tag className="w-4 h-4 text-[#2d4a22]" />
+                    Codes de Réduction en Vigueur
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Liste des coupons actifs ou prévus programmés sur la boutique.
+                  </p>
+                </div>
+
+                <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
+                  {promoCodes.length === 0 ? (
+                    <div className="text-center py-10 text-slate-400 text-xs font-sans">
+                      Aucun code promo n'est actuellement disponible.
+                    </div>
+                  ) : (
+                    promoCodes.map((promo) => (
+                      <div 
+                        key={promo.code}
+                        className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50/50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800 hover:bg-white dark:hover:bg-slate-900 transition-all gap-3 shadow-sm"
+                      >
+                        <div className="flex items-center gap-3 flex-1 min-w-0 text-left">
+                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 select-none ${
+                            promo.status === 'active'
+                              ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/25 dark:text-emerald-450" 
+                              : "bg-amber-50 text-amber-600 dark:bg-amber-950/20 dark:text-amber-450"
+                          }`}>
+                            <Tag className="w-4 h-4" />
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-black font-mono text-slate-800 dark:text-slate-100 truncate">{promo.code}</span>
+                              <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full select-none ${
+                                promo.status === 'active'
+                                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                  : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                              }`}>
+                                {promo.status === 'active' ? 'ACTIF' : 'PRÉVU'}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 block mt-0.5 font-medium truncate font-sans">
+                              {promo.description} ({promo.discount}% de réduction)
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="shrink-0">
+                          {confirmDeletePromoCode === promo.code ? (
+                            <div className="flex items-center gap-1.5 animate-fadeIn">
+                              <button
+                                type="button"
+                                disabled={deletingPromoCode === promo.code}
+                                onClick={() => handleDeletePromoCode(promo.code)}
+                                className="p-1 bg-rose-650 hover:bg-rose-700 text-white rounded-lg transition-colors min-w-[28px] h-[28px] flex items-center justify-center cursor-pointer shadow-sm"
+                                title="Confirmer"
+                              >
+                                {deletingPromoCode === promo.code ? (
+                                  <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                ) : (
+                                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeletePromoCode(null)}
+                                className="p-1 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-750 dark:text-slate-300 rounded-lg transition-colors min-w-[28px] h-[28px] flex items-center justify-center cursor-pointer"
+                                title="Annuler"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={deletingPromoCode !== null}
+                              onClick={() => setConfirmDeletePromoCode(promo.code)}
+                              className="p-1.5 bg-rose-50 hover:bg-rose-600 text-rose-500 hover:text-white dark:bg-rose-950/20 dark:hover:bg-rose-900 rounded-lg transition-all flex items-center justify-center min-w-[32px] h-[32px] cursor-pointer shadow-sm"
+                              title="Supprimer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>
-
       ) : activeSubTab === "site_config" ? (
 
         /* STOREFRONT THEME & STATIC TEXT CONFIGURATION ENGINE */
@@ -1923,236 +2360,321 @@ export default function AdminPortal({
               <div className="text-center py-12 space-y-3 border border-dashed border-slate-200 dark:border-slate-800 rounded-3xl">
                 <Box className="w-8 h-8 text-slate-300 mx-auto" />
                 <p className="text-xs font-bold text-slate-500 dark:text-slate-400 italic">Aucune commande catalogue pour l'instant.</p>
-                <p className="text-[10px] text-slate-400">Toutes les nouvelles commandes d'achat standards s'afficheront ici.</p>
+                <p className="text-[10px] text-slate-404">Toutes les nouvelles commandes d'achat standards s'afficheront ici.</p>
               </div>
             )}
           </div>
         </div>
       ) : activeSubTab === "bespoke" ? (
         /* SPECIAL BESPOKE CUSTOM PIECES REQUESTS OUTSIDE OF COMMON STOCK */
-        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-6 sleek-shadow-md text-left animate-fadeIn">
-          <div className="border-b border-rose-100 dark:border-amber-900/30 pb-3 block">
-            <h3 className="font-sans font-bold text-amber-700 dark:text-amber-450 text-base tracking-tight flex items-center gap-2">
-              <Hammer className="w-5 h-5 text-amber-600 animate-pulse" />
-              Section Spéciale : Demandes Artisanales Sur-Mesure ({bespokeOrders.length})
-            </h3>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-normal">
-              Retrouvez ici toutes les propositions uniques de créations d'Atelier entrées spécifiquement par vos clients sur-mesure (hors-catalogue standard). Gérer chaque projet sur commande spéciale et accédez directement aux options saisies manuellement pour fixer le devis final.
-            </p>
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-101 dark:border-slate-800 p-6 md:p-8 space-y-6 sleek-shadow-md text-left animate-fadeIn">
+          <div className="border-b border-rose-100 dark:border-amber-900/30 pb-4 block flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h3 className="font-sans font-bold text-[#2d4a22] dark:text-emerald-450 text-base tracking-tight flex items-center gap-2">
+                <Hammer className="w-5 h-5 text-[#2d4a22] dark:text-emerald-550 animate-pulse" />
+                Section Spéciale : Demandes Artisanales Sur-Mesure ({productRequests.length})
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-normal">
+                Retrouvez ici toutes les demandes uniques et configurations personnalisées soumises par vos clients via le simulateur intelligent. Cliquez sur une demande pour ouvrir le dossier complet et fixer le devis.
+              </p>
+            </div>
+            {isLoadingRequests && (
+              <div className="flex items-center gap-2 text-xs text-slate-400 font-mono">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#2d4a22]" />
+                Mise à jour...
+              </div>
+            )}
           </div>
 
-          <div className="space-y-4">
-            {bespokeOrders.map((ord: any) => {
-              const isExpanded = !!expandedOrders[ord.id];
+          <div className="space-y-3.5">
+            {productRequests.map((req: any) => {
+              const dateStr = req.createdAt
+                ? new Date(req.createdAt.seconds ? req.createdAt.seconds * 1000 : req.createdAt).toLocaleString("fr-FR", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit"
+                  })
+                : "Récente";
+
               return (
                 <div 
-                  key={ord.id} 
-                  className="bg-amber-500/5 dark:bg-amber-500/5 border border-amber-500/15 dark:border-amber-500/10 rounded-2xl p-4 md:p-5 space-y-4 shadow-3xs transition-all duration-300 animate-slideUp"
+                  key={req.id} 
+                  onClick={() => handleOpenRequest(req)}
+                  className="group/card bg-slate-50/50 hover:bg-slate-50 dark:bg-slate-950/40 dark:hover:bg-slate-950/80 border border-slate-100 hover:border-[#e2eae0] dark:border-slate-850 dark:hover:border-slate-800 rounded-2xl p-4 transition-all duration-300 cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-4 relative shadow-3xs"
                 >
-                  <div 
-                    onClick={() => setExpandedOrders(prev => ({ ...prev, [ord.id]: !prev[ord.id] }))}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1 cursor-pointer select-none group/header"
-                  >
-                    <div className="flex items-center gap-3 font-sans">
-                      <div className="p-2.5 bg-amber-500/10 dark:bg-amber-500/25 rounded-xl text-amber-600 transition-colors group-hover/header:bg-[#2d4a22]/10 group-hover/header:text-[#2d4a22]">
-                        {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                      </div>
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-[9px] uppercase font-mono tracking-widest bg-amber-600 text-white px-2 py-0.5 rounded-full font-bold">COMMANDE COMMODITÉ ATELIER</span>
-                          <span className="text-[10px] text-slate-500">({ord.fullName})</span>
-                        </div>
-                        <span className="text-xs font-mono font-black text-slate-800 dark:text-slate-200">CODE DEMANDE: {ord.id}</span>
-                      </div>
+                  {/* Left: Avatar & Name & Category */}
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-[#2d4a22]/10 dark:bg-[#2d4a22]/20 text-[#2d4a22] dark:text-emerald-450 flex items-center justify-center font-bold font-sans text-sm shrink-0">
+                      {(req.userDisplayName || req.contactValue || "C").charAt(0).toUpperCase()}
                     </div>
-
-                    <div className="flex items-center justify-between sm:justify-end gap-4 min-w-[200px]">
-                      <div className="text-left sm:text-right font-sans">
-                        <span className="text-base font-mono font-bold text-amber-700 dark:text-amber-400 block animate-pulse">
-                          {ord.total ? `${ord.total.toLocaleString()} F CFA` : "Devis en attente"}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <span className="text-xs font-black text-slate-850 dark:text-slate-200 truncate">
+                          {req.userDisplayName || "Client d'Atelier"}
                         </span>
-                        <span className="text-[9px] text-slate-400 font-mono block">
-                          {ord.createdAt ? new Date(ord.createdAt.seconds ? ord.createdAt.seconds * 1000 : ord.createdAt).toLocaleString("fr-FR") : "Récente"}
+                        <span className="text-[9px] uppercase font-mono tracking-widest bg-[#2d4a22]/10 dark:bg-[#2d4a22]/30 text-[#2d4a22] dark:text-emerald-455 px-2.5 py-0.5 rounded-full font-black">
+                          {req.category || "Général"}
                         </span>
                       </div>
-
-                      {confirmDeleteOrderId === ord.id ? (
-                        <div 
-                          className="flex items-center gap-1.5 animate-fadeIn p-1 bg-rose-50/50 dark:bg-rose-950/10 rounded-xl border border-rose-100 dark:border-rose-900/30"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <span className="text-[10px] font-bold text-rose-650 dark:text-rose-400 font-mono px-2 block select-none">
-                            Supprimer ?
-                          </span>
-                          <button
-                            type="button"
-                            disabled={deletingOrderId === ord.id}
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              if (onDeleteOrder) {
-                                try {
-                                  setDeletingOrderId(ord.id);
-                                  await onDeleteOrder(ord.id);
-                                } catch (err) {
-                                  console.error("Special order removal failed:", err);
-                                } finally {
-                                  setDeletingOrderId(null);
-                                  setConfirmDeleteOrderId(null);
-                                }
-                              }
-                            }}
-                            className="p-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer shadow-sm"
-                            title="Confirmer la suppression"
-                          >
-                            {deletingOrderId === ord.id ? (
-                              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                            ) : (
-                              <Check className="w-4 h-4 stroke-[2.5]" />
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setConfirmDeleteOrderId(null);
-                            }}
-                            className="p-1.5 bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg transition-all flex items-center justify-center min-w-[28px] h-[28px] cursor-pointer"
-                            title="Annuler"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={deletingOrderId !== null}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setConfirmDeleteOrderId(ord.id);
-                          }}
-                          className="p-2.5 bg-rose-50 hover:bg-rose-600 text-rose-500 hover:text-white dark:bg-rose-950/20 dark:hover:bg-rose-900 rounded-xl transition-all cursor-pointer flex items-center justify-center min-w-[40px] h-[40px] shadow-sm hover:shadow"
-                          title="Supprimer la demande"
-                        >
-                          <Trash2 className="w-4 h-4 stroke-[2]" />
-                        </button>
-                      )}
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400 mt-1 font-mono">
+                        <span>CODE: {req.id}</span>
+                        <span>&bull;</span>
+                        <span>{dateStr}</span>
+                      </div>
                     </div>
                   </div>
 
-                  {isExpanded && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs pt-4 border-t border-amber-200/30 dark:border-slate-800 animate-fadeIn">
-                      <div className="bg-white dark:bg-slate-900/60 p-4 rounded-xl border border-amber-500/15 space-y-2.5 text-left font-sans">
-                        <h4 className="text-[12px] uppercase font-mono tracking-wider font-extrabold text-[#2d4a22] border-b border-slate-50 dark:border-slate-800/40 pb-1.5 flex items-center gap-1.5">
-                          <UserCheck className="w-3.5 h-3.5 text-amber-505" />
-                          Coordonnées Directes de Contact
-                        </h4>
-                        <div className="space-y-1.5">
-                          <p className="text-slate-800 dark:text-slate-200">
-                            <span className="font-bold text-slate-450 mr-2 uppercase text-[9px] font-mono">Nom Complet:</span> 
-                            {ord.fullName}
-                          </p>
-                          <p className="text-slate-850 dark:text-slate-200 bg-emerald-500/5 p-2 rounded-lg block font-semibold border border-emerald-500/10">
-                            <span className="font-bold text-emerald-600 mr-2 uppercase text-[9px] font-mono">TÉLÈPHONE DIRECT :</span>
-                            <span className="font-mono text-slate-900 dark:text-white text-sm font-black">{ord.phone}</span>
-                          </p>
-                          <p className="text-slate-800 dark:text-slate-200">
-                            <span className="font-bold text-slate-450 mr-2 uppercase text-[9px] font-mono">Email :</span>
-                            <span className="font-mono underline text-slate-900 dark:text-white">{ord.email}</span>
-                            {ord.email && (
-                              <a
-                                href={`mailto:${ord.email}?subject=Votre projet sur-mesure ${ord.id} - Atelier Nexus Lounge&body=Bonjour ${ord.fullName || 'Client d\'exception'},%0D%0A%0D%0ANous faisons suite à votre demande de projet sur-mesure d'Atelier ${ord.id}.%0D%0A%0D%0ANos artisans perfectionnent la conception sur-mesure de votre mobilier de prestige selon les caractéristiques spécifiées. Nous vous communiquerons le devis complet d'Atelier sous peu.%0D%0A%0D%0ACordialement,%0D%0AL'Atelier Nexus Lounge`}
-                                onClick={(e) => e.stopPropagation()}
-                                className="ml-2.5 inline-flex items-center gap-1 px-2 py-0.5 bg-[#2d4a22]/10 hover:bg-[#2d4a22]/15 text-[#2d4a22] dark:text-[#a3e635] text-[9px] uppercase font-black rounded cursor-pointer transition-all border border-[#2d4a22]/10"
-                                title="Contacter par e-mail"
-                              >
-                                <Mail className="w-2.5 h-2.5" /> Écrire
-                              </a>
-                            )}
-                          </p>
-                          <p className="text-slate-800 dark:text-slate-200">
-                            <span className="font-bold text-slate-450 mr-2 uppercase text-[9px] font-mono">Adresse Souhaitée:</span>
-                            {ord.address}
-                          </p>
-                          <p className="text-slate-850 dark:text-slate-200">
-                            <span className="font-bold text-slate-450 mr-2 uppercase text-[9px] font-mono">Ville:</span>
-                            {ord.city}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="bg-white dark:bg-slate-900/60 p-4 rounded-xl border border-amber-500/15 space-y-3 text-left">
-                        <h4 className="text-[12px] uppercase font-mono tracking-wider font-extrabold text-[#2d4a22] border-b border-slate-50 dark:border-slate-800/40 pb-1.5 flex items-center gap-1.5">
-                          <Hammer className="w-3.5 h-3.5 text-[#2d4a22]" />
-                          Descriptif Technique Projet Sur-Mesure
-                        </h4>
-                        <div className="space-y-2">
-                          {ord.items?.map((it: any, index: number) => (
-                            <div key={index} className="space-y-2 border-b border-slate-50 dark:border-slate-800/40 pb-2 text-[11px]">
-                              <div>
-                                <span className="font-extrabold text-[#2d4a22] dark:text-emerald-450 text-sm block">
-                                  {it.name}
-                                </span>
-                                {it.selectedColor?.name && (
-                                  <p className="text-[10px] text-slate-600 dark:text-slate-300 mt-1 font-semibold">
-                                    • Teinte de base : {it.selectedColor.name} 
-                                    <span className="w-2.5 h-2.5 rounded-full inline-block border border-black/10 align-middle ml-1.5" style={{ backgroundColor: it.selectedColor.hex }}></span>
-                                  </p>
-                                )}
-                              </div>
-                              
-                              <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 space-y-1 text-left">
-                                <span className="text-[9px] font-mono font-bold text-slate-400 block uppercase">Options & Caractéristiques souhaitées :</span>
-                                <p className="text-slate-700 dark:text-slate-200 font-sans leading-relaxed break-words font-black">
-                                  {it.selectedVariant || "Spécifications par défaut."}
-                                </p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {isExpanded && (
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-3 border-t border-dashed border-amber-200/30 dark:border-slate-800 gap-3">
-                      <span className="text-[10px] font-mono font-extrabold text-slate-400 flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
-                        Identifiant d'origine: {ord.userId}
+                  {/* Right: Budget & Viewed Status badge & Action buttons */}
+                  <div className="flex items-center justify-between md:justify-end gap-4 shrink-0">
+                    <div className="text-left md:text-right font-sans">
+                      <span className="text-xs text-slate-400 uppercase tracking-widest block font-mono text-[9px]">Budget Estimatif</span>
+                      <span className="text-sm font-mono font-extrabold text-[#2d4a22] dark:text-emerald-450 block">
+                        {req.estimatedBudget ? `${req.estimatedBudget.toLocaleString()} FCFA` : "Devis en attente"}
                       </span>
-                      
-                      <div className="flex flex-wrap gap-2">
-                        {ord.phone && (
-                          <a 
-                            href={`https://wa.me/${ord.phone.replace(/[^0-9]/g, "")}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-[10px] uppercase font-black tracking-wider transition-all select-none"
-                          >
-                            Ouvrir dans WhatsApp
-                          </a>
-                        )}
-                        {ord.phone && (
-                          <a 
-                            href={`tel:${ord.phone}`}
-                            className="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2 rounded-xl text-[10px] uppercase font-black tracking-wider transition-all"
-                          >
-                            Appeler l'Acheteur
-                          </a>
-                        )}
-                      </div>
                     </div>
-                  )}
+
+                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                      {/* Viewed Status Badge */}
+                      <button
+                        type="button"
+                        onClick={(e) => handleToggleRequestViewed(req, e)}
+                        className={`px-3 py-1.5 rounded-xl text-[10px] font-extrabold uppercase tracking-wide flex items-center gap-1.5 cursor-pointer transition-all border ${
+                          req.viewed
+                            ? "bg-slate-100 dark:bg-slate-800 border-slate-200/50 dark:border-slate-700 text-slate-600 dark:text-slate-300"
+                            : "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400 animate-pulse"
+                        }`}
+                        title={req.viewed ? "Marquer comme non vue" : "Marquer comme vue"}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${req.viewed ? "bg-slate-400" : "bg-amber-500 animate-ping"}`}></span>
+                        {req.viewed ? "Vue" : "Non vue"}
+                      </button>
+
+                      {/* Delete Button */}
+                      <button
+                        type="button"
+                        disabled={deletingRequestId === req.id}
+                        onClick={(e) => handleDeleteRequest(req.id, e)}
+                        className="p-2.5 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-slate-400 hover:text-rose-500 rounded-xl transition-all cursor-pointer flex items-center justify-center min-w-[36px] h-[36px] border border-transparent hover:border-rose-101 dark:hover:border-rose-900/40"
+                        title="Supprimer la demande"
+                      >
+                        {deletingRequestId === req.id ? (
+                          <div className="w-3.5 h-3.5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               );
             })}
 
-            {bespokeOrders.length === 0 && (
-              <div className="text-center py-12 space-y-3 border border-dashed border-amber-200 rounded-3xl">
-                <Box className="w-8 h-8 text-amber-500 mx-auto" />
-                <p className="text-xs font-bold text-slate-500 italic">Aucune commande spéciale ou projet sur-mesure d'Atelier reçu pour l'instant.</p>
+            {productRequests.length === 0 && !isLoadingRequests && (
+              <div className="text-center py-16 space-y-3.5 border border-dashed border-slate-200 dark:border-slate-800 rounded-3xl">
+                <Box className="w-10 h-10 text-slate-300 mx-auto" />
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 italic">Aucune demande sur-mesure d'Atelier pour l'instant.</p>
+                  <p className="text-[10px] text-slate-400">Toutes les configurations soumises par vos clients s'afficheront ici en temps réel.</p>
+                </div>
               </div>
             )}
           </div>
+
+          {/* ANIMA PRESENCE FOR GORGEOUS DETAILS MODAL */}
+          <AnimatePresence>
+            {selectedRequest && (
+              <div className="fixed inset-0 z-55 flex items-center justify-center p-4">
+                {/* Backdrop overlay */}
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setSelectedRequest(null)}
+                  className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs"
+                />
+
+                {/* Modal Container */}
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                  transition={{ duration: 0.3 }}
+                  className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl w-full max-w-2xl max-h-[85vh] overflow-y-auto relative z-10 shadow-xl p-6 md:p-8 space-y-6"
+                >
+                  {/* Modal Header */}
+                  <div className="flex items-start justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+                    <div>
+                      <div className="flex items-center gap-2.5 flex-wrap mb-1">
+                        <span className="text-[10px] uppercase font-mono tracking-widest bg-[#2d4a22]/10 dark:bg-[#2d4a22]/30 text-[#2d4a22] dark:text-emerald-450 px-3 py-0.5 rounded-full font-black">
+                          {selectedRequest.category}
+                        </span>
+                        <span className={`text-[9px] uppercase font-mono tracking-widest px-2.5 py-0.5 rounded-full font-black border ${
+                          selectedRequest.viewed
+                            ? "bg-slate-50 dark:bg-slate-950 border-slate-200 text-slate-500"
+                            : "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400 animate-pulse"
+                        }`}>
+                          {selectedRequest.viewed ? "Dossier Consulté" : "Nouveau Dossier"}
+                        </span>
+                      </div>
+                      <h4 className="font-sans text-lg font-black text-slate-900 dark:text-white tracking-tight">
+                        Dossier Client : {selectedRequest.userDisplayName || "Invité d'Atelier"}
+                      </h4>
+                      <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        Identifiant : {selectedRequest.id} &bull; Reçu le : {selectedRequest.createdAt ? new Date(selectedRequest.createdAt.seconds ? selectedRequest.createdAt.seconds * 1000 : selectedRequest.createdAt).toLocaleString("fr-FR") : "Récente"}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRequest(null)}
+                      className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 rounded-full transition-all cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Modal Content Grid */}
+                  <div className="space-y-6 text-xs text-slate-700 dark:text-slate-300">
+                    
+                    {/* Customer Contact & Sourcing parameters */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      
+                      {/* Customer Info Card */}
+                      <div className="bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-850 p-4 rounded-2xl space-y-3">
+                        <span className="text-[10px] uppercase font-mono font-bold tracking-widest text-slate-400 block border-b border-slate-200/50 dark:border-slate-800/50 pb-1">
+                          👤 Coordonnées Client
+                        </span>
+                        <div className="space-y-1.5 font-sans">
+                          <p>
+                            <span className="font-bold text-slate-450 uppercase text-[9px] font-mono mr-2">Nom :</span>
+                            <span className="font-semibold text-slate-900 dark:text-white">{selectedRequest.userDisplayName || "Invité d'Atelier"}</span>
+                          </p>
+                          <p>
+                            <span className="font-bold text-slate-455 uppercase text-[9px] font-mono mr-2">Contact :</span>
+                            <span className="font-semibold text-slate-900 dark:text-white font-mono">{selectedRequest.contactValue || "Non spécifié"}</span>
+                          </p>
+                          <p>
+                            <span className="font-bold text-slate-455 uppercase text-[9px] font-mono mr-2">Canal :</span>
+                            <span className="font-bold text-emerald-600 uppercase font-sans text-[10px]">{selectedRequest.contactChannel || "Non spécifié"}</span>
+                          </p>
+                          <p>
+                            <span className="font-bold text-slate-455 uppercase text-[9px] font-mono mr-2">Lieu :</span>
+                            <span className="font-semibold text-slate-900 dark:text-white">{selectedRequest.city || "Abidjan"}, {selectedRequest.country || "Côte d'Ivoire"}</span>
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Project Sourcing Card */}
+                      <div className="bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-855 p-4 rounded-2xl space-y-3">
+                        <span className="text-[10px] uppercase font-mono font-bold tracking-widest text-slate-400 block border-b border-slate-200/50 dark:border-slate-800/50 pb-1">
+                          📋 Paramètres du Projet
+                        </span>
+                        <div className="space-y-1.5 font-sans">
+                          <p>
+                            <span className="font-bold text-slate-455 uppercase text-[9px] font-mono mr-2">Quantité :</span>
+                            <span className="font-black text-slate-900 dark:text-white">{selectedRequest.desiredQuantity || 1} unité(s)</span>
+                          </p>
+                          <p>
+                            <span className="font-bold text-slate-455 uppercase text-[9px] font-mono mr-2">Délai :</span>
+                            <span className="font-black text-amber-600 font-sans">{selectedRequest.desiredDelay || "Cette semaine"}</span>
+                          </p>
+                          <p>
+                            <span className="font-bold text-slate-455 uppercase text-[9px] font-mono mr-2">Budget :</span>
+                            <span className="font-black text-[#2d4a22] dark:text-emerald-455 font-mono text-sm">
+                              {selectedRequest.estimatedBudget ? `${selectedRequest.estimatedBudget.toLocaleString()} FCFA` : "Devis en attente"}
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+
+                    </div>
+
+                    {/* Characteristics configured */}
+                    <div className="space-y-2.5">
+                      <span className="text-[10px] uppercase font-mono font-bold tracking-widest text-[#2d4a22] dark:text-emerald-450 block border-b border-[#2d4a22]/10 pb-1">
+                        🛠️ Caractéristiques Personnalisées Sélectionnées
+                      </span>
+                      {selectedRequest.characteristics && Object.keys(selectedRequest.characteristics).length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          {Object.entries(selectedRequest.characteristics).map(([key, val]: [string, any]) => {
+                            if (key === "budget") return null; // Already displayed above
+                            return (
+                              <div key={key} className="bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-100 dark:border-slate-850 flex justify-between items-center gap-4">
+                                <span className="font-bold text-slate-500 font-sans text-[11px] truncate">{key}</span>
+                                <span className="font-black text-slate-855 dark:text-slate-100 font-sans text-[11px] shrink-0">{String(val)}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-slate-400 italic font-medium">Aucune caractéristique spécifique n'a été pré-configurée.</p>
+                      )}
+                    </div>
+
+                    {/* Customer Free Text Description */}
+                    <div className="space-y-2">
+                      <span className="text-[10px] uppercase font-mono font-bold tracking-widest text-slate-400 block border-b border-slate-200/50 dark:border-slate-800/50 pb-1">
+                        📝 Description et Notes du Client
+                      </span>
+                      <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-101 dark:border-slate-850 font-sans leading-relaxed text-slate-800 dark:text-slate-200 font-medium break-words text-left">
+                        {selectedRequest.description || "Aucune description complémentaire fournie."}
+                      </div>
+                    </div>
+
+                    {/* Contact integration and toggle viewed */}
+                    <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+                      {/* Mark Viewed Action */}
+                      <button
+                        type="button"
+                        onClick={(e) => handleToggleRequestViewed(selectedRequest, e)}
+                        className={`w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer transition-colors border ${
+                          selectedRequest.viewed
+                            ? "bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-850 text-slate-500 border-slate-200 dark:border-slate-700"
+                            : "bg-amber-600 hover:bg-amber-700 text-white border-transparent"
+                        }`}
+                      >
+                        <Check className="w-4 h-4" />
+                        {selectedRequest.viewed ? "Marquer non vue" : "Marquer comme Traitée / Vue"}
+                      </button>
+
+                      {/* External actions (WhatsApp, Mail) */}
+                      <div className="flex w-full sm:w-auto gap-2">
+                        {selectedRequest.contactValue && selectedRequest.contactChannel === "whatsapp" && (
+                          <a
+                            href={`https://wa.me/${selectedRequest.contactValue.replace(/[^0-9]/g, "")}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 sm:flex-none text-center bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-xs uppercase font-black tracking-wider transition-all select-none flex items-center justify-center gap-1.5"
+                          >
+                            WhatsApp Client
+                          </a>
+                        )}
+                        {selectedRequest.contactValue && selectedRequest.contactChannel === "email" && (
+                          <a
+                            href={`mailto:${selectedRequest.contactValue}?subject=Votre projet sur-mesure d'Atelier ${selectedRequest.id}&body=Bonjour ${selectedRequest.userDisplayName || 'Client d\'exception'},%0D%0A%0D%0ANous faisons suite à votre demande sur-mesure ${selectedRequest.id} dans la catégorie ${selectedRequest.category}.%0D%0A%0D%0ANos maîtres d'art perfectionnent le devis complet et l'étude technique pour la réalisation de vos options souhaitées.%0D%0A%0D%0ACordialement,%0D%0AL'Atelier d'Exception`}
+                            className="flex-1 sm:flex-none text-center bg-[#2d4a22] hover:bg-[#1a2d15] text-white px-4 py-2.5 rounded-xl text-xs uppercase font-black tracking-wider transition-all flex items-center justify-center gap-1.5"
+                          >
+                            <Mail className="w-4 h-4" /> Écrire par Email
+                          </a>
+                        )}
+                        {selectedRequest.contactValue && selectedRequest.contactChannel === "phone" && (
+                          <a
+                            href={`tel:${selectedRequest.contactValue}`}
+                            className="flex-1 sm:flex-none text-center bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-755 text-slate-800 dark:text-white px-4 py-2.5 rounded-xl text-xs uppercase font-black tracking-wider transition-all flex items-center justify-center gap-1.5 border border-slate-200 dark:border-slate-700"
+                          >
+                            Appeler le Client
+                          </a>
+                        )}
+                      </div>
+                    </div>
+
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
         </div>
       ) : activeSubTab === "custom_options" ? (
         /* ADVANCED CONFIGURATOR FOR DYNAMIC PRODUCT CHARACTERISTICS IN MANUFACTURE SUR MESURE */
