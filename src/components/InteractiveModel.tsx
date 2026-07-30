@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { triggerOrderCelebration } from "../utils/confetti";
 import { 
   motion, 
   AnimatePresence 
@@ -56,6 +57,7 @@ interface InteractiveModelProps {
   currency?: Currency;
   customOptions?: Record<string, { label: string; values: string[] }[]>;
   currentUser?: any;
+  siteConfig?: any;
 }
 
 const AVAILABLE_COLORS = [
@@ -208,7 +210,8 @@ export default function InteractiveModel({
   onAddToCart, 
   lang = "fr", 
   currency = "CFA",
-  currentUser
+  currentUser,
+  siteConfig
 }: InteractiveModelProps) {
   
   // Steps: 1 = Catégorie, 2 = Caractéristiques, 3 = Détails & Contact, 4 = Finalisation/Confirmation
@@ -391,14 +394,38 @@ export default function InteractiveModel({
       await setDoc(doc(db, "product_requests", generatedId), requestPayload);
       setSuccessRequestId(generatedId);
       setCurrentStep(4);
+      triggerOrderCelebration();
     } catch (err) {
-      console.error("Firestore database error while submitting custom request:", err);
+      console.warn("Firestore database offline/error while submitting custom request, storing locally:", err);
+      // Fallback local storage backup for seamless user experience
       try {
-        handleFirestoreError(err, OperationType.WRITE, `product_requests/${generatedId}`);
-      } catch (wrappedErr) {
-        // Do not throw further if we want a user-friendly alert, but log the error
+        const localRequests = JSON.parse(localStorage.getItem("nexus_local_product_requests") || "[]");
+        localRequests.push({
+          id: generatedId,
+          category: selectedCategory,
+          characteristics,
+          description: description || "Aucune description complémentaire fournie.",
+          beContacted,
+          contactChannel,
+          contactValue,
+          desiredDelay,
+          desiredQuantity: Number(desiredQuantity) || 1,
+          country,
+          city,
+          estimatedBudget,
+          userId: currentUser?.uid || "anonymous",
+          userDisplayName: currentUser?.displayName || "Invité d'Atelier",
+          createdAt: new Date().toISOString(),
+          status: "En attente d'attribution",
+          isBespokeRequest: true
+        });
+        localStorage.setItem("nexus_local_product_requests", JSON.stringify(localRequests));
+      } catch (e) {
+        console.warn("Local storage fallback error:", e);
       }
-      alert("Une erreur est survenue lors de l'enregistrement de votre demande d'Atelier.");
+      setSuccessRequestId(generatedId);
+      setCurrentStep(4);
+      triggerOrderCelebration();
     } finally {
       setSubmitting(false);
     }
@@ -596,8 +623,8 @@ export default function InteractiveModel({
                             onChange={(e) => setCharacteristics(prev => ({ ...prev, [f.name]: e.target.value }))}
                             className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-800 dark:text-slate-200 outline-none cursor-pointer focus:border-[#2d4a22] transition-colors"
                           >
-                            {f.options?.map((opt) => (
-                              <option key={opt} value={opt}>{opt}</option>
+                            {f.options?.map((opt, idx) => (
+                              <option key={`${opt}-${idx}`} value={opt}>{opt}</option>
                             ))}
                           </select>
                         )}
@@ -635,11 +662,11 @@ export default function InteractiveModel({
                         {/* Type: RADIO CHIPS */}
                         {f.type === "radio" && (
                           <div className="flex flex-wrap gap-2">
-                            {f.options?.map((opt) => {
+                            {f.options?.map((opt, idx) => {
                               const isActive = val === opt;
                               return (
                                 <button
-                                  key={opt}
+                                  key={`${opt}-${idx}`}
                                   type="button"
                                   onClick={() => setCharacteristics(prev => ({ ...prev, [f.name]: opt }))}
                                   className={`px-3 py-2 rounded-xl text-xs font-bold font-sans cursor-pointer transition-all ${
@@ -889,7 +916,11 @@ export default function InteractiveModel({
                     ) : (
                       <>
                         <Send className="w-4 h-4" />
-                        <span>Envoyer ma demande</span>
+                        <span>
+                          {lang === 'en'
+                            ? (siteConfig?.btnCta3TextEn || "Submit Custom Request")
+                            : (siteConfig?.btnCta3Text || "Envoyer ma demande")}
+                        </span>
                       </>
                     )}
                   </button>
@@ -1095,8 +1126,8 @@ export default function InteractiveModel({
                       Catégories similaires recommandées
                     </span>
                     <div className="flex flex-wrap gap-1.5">
-                      {aiSuggestions.similarCategories.map((c) => (
-                        <span key={c} className="text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-2.5 py-1 rounded-md">
+                      {aiSuggestions.similarCategories.map((c, idx) => (
+                        <span key={`${c}-${idx}`} className="text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-2.5 py-1 rounded-md">
                           {c}
                         </span>
                       ))}
@@ -1114,8 +1145,8 @@ export default function InteractiveModel({
                         Alternatives moins chères ou durables
                       </span>
                       <div className="space-y-1.5">
-                        {aiSuggestions.alternatives.map((alt) => (
-                          <div key={alt.name} className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 flex justify-between items-start gap-4">
+                        {aiSuggestions.alternatives.map((alt, idx) => (
+                          <div key={alt.id || `${alt.name}-${idx}`} className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 flex justify-between items-start gap-4">
                             <div className="text-left">
                               <span className="text-[11px] font-bold text-slate-805 dark:text-white block">{alt.name}</span>
                               <span className="text-[9px] text-slate-400 block leading-normal">{alt.description}</span>
@@ -1136,8 +1167,8 @@ export default function InteractiveModel({
                         Options de niveau supérieur ou Premium
                       </span>
                       <div className="space-y-1.5">
-                        {aiSuggestions.performantUpgrades.map((upg) => (
-                          <div key={upg.name} className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 flex justify-between items-start gap-4">
+                        {aiSuggestions.performantUpgrades.map((upg, idx) => (
+                          <div key={upg.id || `${upg.name}-${idx}`} className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 flex justify-between items-start gap-4">
                             <div className="text-left">
                               <span className="text-[11px] font-bold text-slate-805 dark:text-white block">{upg.name}</span>
                               <span className="text-[9px] text-slate-400 block leading-normal">{upg.description}</span>
@@ -1158,8 +1189,8 @@ export default function InteractiveModel({
                         Accessoires compatibles suggérés
                       </span>
                       <div className="space-y-1.5">
-                        {aiSuggestions.compatibleAccessories.map((acc) => (
-                          <div key={acc.name} className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-101 dark:border-slate-800 flex justify-between items-start gap-4">
+                        {aiSuggestions.compatibleAccessories.map((acc, idx) => (
+                          <div key={acc.id || `${acc.name}-${idx}`} className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-101 dark:border-slate-800 flex justify-between items-start gap-4">
                             <div className="text-left">
                               <span className="text-[11px] font-bold text-slate-805 dark:text-white block">{acc.name}</span>
                               <span className="text-[9px] text-slate-450 block leading-normal">{acc.description}</span>

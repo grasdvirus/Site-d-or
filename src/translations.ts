@@ -642,3 +642,25 @@ export function formatPrice(euroAmount: number, currency: Currency): string {
     return `${converted.toFixed(2)} ${metadata.symbol}`;
   }
 }
+
+export function formatBespokePrice(fcfaAmount: number, currency: Currency): string {
+  const num = Number(fcfaAmount) || 0;
+  if (currency === "CFA") {
+    return `${Math.round(num).toLocaleString("fr-FR")} FCFA`;
+  } else if (currency === "USD") {
+    const usd = (num / 655.957) * 1.08;
+    return `$${usd.toFixed(2)}`;
+  } else {
+    // EUR
+    const eur = num / 655.957;
+    return `${eur.toFixed(2)} €`;
+  }
+}
+
+export function formatOrderTotal(amount: number, currency: Currency): string {
+  const num = Number(amount) || 0;
+  if (num > 10000) {
+    return formatBespokePrice(num, currency);
+  }
+  return formatPrice(num, currency);
+}

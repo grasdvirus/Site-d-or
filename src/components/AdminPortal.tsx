@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Lock, Unlock, Plus, Trash2, Edit2, Check, X, Tag, Layers, Coins, ChevronDown, ChevronUp, Image as ImageIcon, Sliders, CheckCircle2, AlertTriangle, Hammer, ShieldCheck, Box, UserCheck, Settings, HelpCircle, FileText, Globe, Mail, Send, Inbox, RefreshCw } from "lucide-react";
+import { Lock, Unlock, Plus, Trash2, Edit2, Check, X, Tag, Layers, Coins, ChevronDown, ChevronUp, Image as ImageIcon, Sliders, CheckCircle2, AlertTriangle, Hammer, ShieldCheck, Box, UserCheck, Settings, HelpCircle, FileText, Globe, Mail, Send, Inbox, RefreshCw, BarChart3, TrendingUp } from "lucide-react";
 import { Product, PromoCode } from "../types";
 import { db } from "../firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { formatPrice } from "../translations";
+import { formatPrice, formatOrderTotal, formatBespokePrice } from "../translations";
+import AnalyticsD3Dashboard from "./AnalyticsD3Dashboard";
 
 interface AdminPortalProps {
   products: Product[];
@@ -54,6 +55,7 @@ export default function AdminPortal({
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
   const [isLoadingRequests, setIsLoadingRequests] = useState(false);
   const [deletingRequestId, setDeletingRequestId] = useState<string | null>(null);
+  const [requestToDelete, setRequestToDelete] = useState<any | null>(null);
   
   // Product edition / creation form states
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -132,7 +134,7 @@ export default function AdminPortal({
   };
 
   // Site dynamic configuration editing states
-  const [activeSubTab, setActiveSubTab] = useState<"catalog" | "site_config" | "categories" | "orders" | "bespoke" | "custom_options" | "action_buttons">("catalog");
+  const [activeSubTab, setActiveSubTab] = useState<"analytics" | "catalog" | "site_config" | "categories" | "orders" | "bespoke" | "custom_options" | "action_buttons">("analytics");
   
   // Custom Options customizer states in AdminPortal
   const [targetCustomProductId, setTargetCustomProductId] = useState<string>("");
@@ -221,6 +223,12 @@ export default function AdminPortal({
   const [heroDesc, setHeroDesc] = useState("");
   const [faqs, setFaqs] = useState<{ question: string; answer: string }[]>([]);
 
+  // Payment Numbers configuration states
+  const [waveNumbers, setWaveNumbers] = useState("0704542909 / 0503654886");
+  const [orangeNumber, setOrangeNumber] = useState("0704542909");
+  const [mtnNumber, setMtnNumber] = useState("0503654886");
+  const [visaWhatsAppNumber, setVisaWhatsAppNumber] = useState("0704542909");
+
   // Action Buttons states
   const [btnCta1Text, setBtnCta1Text] = useState("Découvrir la Collection");
   const [btnCta1TextEn, setBtnCta1TextEn] = useState("Discover the Collection");
@@ -299,6 +307,11 @@ export default function AdminPortal({
             setHeroDesc(data.heroDesc || "");
             if (data.faqs) setFaqs(data.faqs);
 
+            setWaveNumbers(data.waveNumbers || "0704542909 / 0503654886");
+            setOrangeNumber(data.orangeNumber || "0704542909");
+            setMtnNumber(data.mtnNumber || "0503654886");
+            setVisaWhatsAppNumber(data.visaWhatsAppNumber || "0704542909");
+
             setBtnCta1Text(data.btnCta1Text ?? "Découvrir la Collection");
             setBtnCta1TextEn(data.btnCta1TextEn ?? "Discover the Collection");
             setBtnCta1Target(data.btnCta1Target ?? "pricing-plans");
@@ -338,6 +351,11 @@ export default function AdminPortal({
           } else if (data.faq) {
             setFaqs(data.faq);
           }
+
+          setWaveNumbers(data.waveNumbers || "0704542909 / 0503654886");
+          setOrangeNumber(data.orangeNumber || "0704542909");
+          setMtnNumber(data.mtnNumber || "0503654886");
+          setVisaWhatsAppNumber(data.visaWhatsAppNumber || "0704542909");
 
           setBtnCta1Text(data.btnCta1Text ?? "Découvrir la Collection");
           setBtnCta1TextEn(data.btnCta1TextEn ?? "Discover the Collection");
@@ -389,7 +407,7 @@ export default function AdminPortal({
   // Synchroniser les demandes sur-mesure (product_requests)
   useEffect(() => {
     const isAdminUser = currentUser?.email === "grasdvirus@gmail.com" || localAuthenticated;
-    if (!isAdminUser || activeSubTab !== "bespoke") {
+    if (!isAdminUser || (activeSubTab !== "bespoke" && activeSubTab !== "analytics")) {
       return;
     }
     const fetchRequests = async () => {
@@ -403,13 +421,29 @@ export default function AdminPortal({
           fetched.push({ ...docSnap.data(), id: docSnap.id });
         });
         
+        // Merge local backup requests if present
+        try {
+          const localReqs = JSON.parse(localStorage.getItem("nexus_local_product_requests") || "[]");
+          localReqs.forEach((lr: any) => {
+            if (!fetched.some((f: any) => f.id === lr.id)) {
+              fetched.push(lr);
+            }
+          });
+        } catch (e) {
+          console.warn("Error reading local backup in admin:", e);
+        }
+
+        // Exclude blacklisted deleted IDs
+        const deletedIds: string[] = JSON.parse(localStorage.getItem("nexus_deleted_product_request_ids") || "[]");
+        const filtered = fetched.filter((item: any) => !deletedIds.includes(item.id));
+
         // Trier par date décroissante (les plus récents en premier)
-        fetched.sort((a, b) => {
+        filtered.sort((a, b) => {
           const timeA = a.createdAt?.seconds || (a.createdAt ? new Date(a.createdAt).getTime() / 1000 : 0);
           const timeB = b.createdAt?.seconds || (b.createdAt ? new Date(b.createdAt).getTime() / 1000 : 0);
           return timeB - timeA;
         });
-        setProductRequests(fetched);
+        setProductRequests(filtered);
       } catch (err) {
         console.error("Failed to fetch product_requests:", err);
       } finally {
@@ -467,22 +501,60 @@ export default function AdminPortal({
     }
   };
 
-  const handleDeleteRequest = async (reqId: string, e?: React.MouseEvent) => {
+  const triggerDeleteRequest = (req: any, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    if (!window.confirm("Voulez-vous vraiment supprimer définitivement cette demande sur-mesure ?")) {
-      return;
-    }
+    setRequestToDelete(req);
+  };
+
+  const confirmDeleteRequest = async (req: any) => {
+    if (!req || !req.id) return;
+    const reqId = req.id;
     try {
       setDeletingRequestId(reqId);
-      const { doc, deleteDoc } = await import("firebase/firestore");
-      await deleteDoc(doc(db, "product_requests", reqId));
+
+      // 1. Save to deleted IDs blacklist in local storage
+      try {
+        const deletedIds: string[] = JSON.parse(localStorage.getItem("nexus_deleted_product_request_ids") || "[]");
+        if (!deletedIds.includes(reqId)) {
+          deletedIds.push(reqId);
+          localStorage.setItem("nexus_deleted_product_request_ids", JSON.stringify(deletedIds));
+        }
+      } catch (err) {
+        console.warn("Failed to update deleted_product_request_ids blacklist:", err);
+      }
+
+      // 2. Remove from local storage backup
+      try {
+        const localReqs = JSON.parse(localStorage.getItem("nexus_local_product_requests") || "[]");
+        const updatedLocal = localReqs.filter((r: any) => r.id !== reqId && r.requestId !== reqId);
+        localStorage.setItem("nexus_local_product_requests", JSON.stringify(updatedLocal));
+      } catch (localErr) {
+        console.warn("Local storage cleanup error:", localErr);
+      }
+
+      // 3. Attempt Firestore deletion
+      try {
+        const { doc, deleteDoc } = await import("firebase/firestore");
+        await deleteDoc(doc(db, "product_requests", reqId));
+      } catch (firestoreErr) {
+        console.warn("Firestore delete warning (handled via local blacklist):", firestoreErr);
+      }
+
+      // 4. Update UI states
       setProductRequests((prev) => prev.filter((r) => r.id !== reqId));
       if (selectedRequest?.id === reqId) {
         setSelectedRequest(null);
       }
+      setRequestToDelete(null);
+      setNotifMessage("Demande sur-mesure supprimée avec succès.");
+      setTimeout(() => setNotifMessage(""), 4000);
     } catch (err) {
       console.error("Failed to delete product_request:", err);
-      alert("Erreur lors de la suppression de la demande.");
+      setProductRequests((prev) => prev.filter((r) => r.id !== reqId));
+      if (selectedRequest?.id === reqId) {
+        setSelectedRequest(null);
+      }
+      setRequestToDelete(null);
     } finally {
       setDeletingRequestId(null);
     }
@@ -732,7 +804,27 @@ export default function AdminPortal({
       heroTitle: heroTitle.trim(),
       heroSub: heroSub.trim(),
       heroDesc: heroDesc.trim(),
-      faqs: faqs
+      faqs: faqs,
+      waveNumbers: waveNumbers.trim(),
+      orangeNumber: orangeNumber.trim(),
+      mtnNumber: mtnNumber.trim(),
+      visaWhatsAppNumber: visaWhatsAppNumber.trim(),
+      btnCta1Text: btnCta1Text.trim(),
+      btnCta1TextEn: btnCta1TextEn.trim(),
+      btnCta1Target: btnCta1Target.trim(),
+      btnCta1Style: btnCta1Style,
+      btnCta1Active: btnCta1Active,
+      btnCta2Text: btnCta2Text.trim(),
+      btnCta2TextEn: btnCta2TextEn.trim(),
+      btnCta2Target: btnCta2Target.trim(),
+      btnCta2Style: btnCta2Style,
+      btnCta2Active: btnCta2Active,
+      btnCta3Text: btnCta3Text.trim(),
+      btnCta3TextEn: btnCta3TextEn.trim(),
+      btnCta3Active: btnCta3Active,
+      btnCta4Text: btnCta4Text.trim(),
+      btnCta4TextEn: btnCta4TextEn.trim(),
+      btnCta4Active: btnCta4Active
     };
 
     // 1. Optimistic instant local updates
@@ -1053,6 +1145,13 @@ export default function AdminPortal({
       {/* Admin Panel Multi Sub Navigation Tabs */}
       <div className="flex flex-wrap border-b border-slate-100 justify-start gap-x-5 gap-y-2 select-none font-sans font-bold text-xs tracking-tight">
         <button
+          onClick={() => setActiveSubTab("analytics")}
+          className={`pb-3 border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${activeSubTab === "analytics" ? "border-[#2d4a22] text-[#2d4a22]" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          Analytiques & Performance (D3.js)
+        </button>
+        <button
           onClick={() => setActiveSubTab("catalog")}
           className={`pb-3 border-b-2 transition-all cursor-pointer ${activeSubTab === "catalog" ? "border-[#2d4a22] text-[#2d4a22]" : "border-transparent text-slate-400 hover:text-slate-600"}`}
         >
@@ -1088,9 +1187,21 @@ export default function AdminPortal({
         >
           Configurations & FAQ
         </button>
+        <button
+          onClick={() => setActiveSubTab("action_buttons")}
+          className={`pb-3 border-b-2 transition-all cursor-pointer ${activeSubTab === "action_buttons" ? "border-[#2d4a22] text-[#2d4a22]" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+        >
+          Boutons d'Action (CTA)
+        </button>
       </div>
 
-      {activeSubTab === "catalog" ? (
+      {activeSubTab === "analytics" ? (
+        <AnalyticsD3Dashboard 
+          products={products} 
+          orders={orders} 
+          productRequests={productRequests} 
+        />
+      ) : activeSubTab === "catalog" ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
           {/* Form to add item */}
@@ -1168,8 +1279,8 @@ export default function AdminPortal({
                   onChange={(e) => setCategory(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-100 text-xs rounded-xl px-3.5 py-2.5 text-slate-700 outline-none cursor-pointer focus:bg-white focus:border-[#2d4a22]"
                 >
-                  {categories.map((cat) => (
-                    <option key={cat} value={cat}>{cat}</option>
+                  {categories.map((cat, idx) => (
+                    <option key={`${cat}-${idx}`} value={cat}>{cat}</option>
                   ))}
                 </select>
               </div>
@@ -1328,9 +1439,9 @@ export default function AdminPortal({
 
               {/* Display colors generated */}
               <div className="flex flex-wrap gap-2 pt-1">
-                {colorsList.map((c) => (
+                {colorsList.map((c, idx) => (
                   <span 
-                    key={c.hex}
+                    key={`${c.hex}-${idx}`}
                     className="flex items-center gap-2 bg-white text-slate-700 font-bold text-[10px] p-1.5 px-3 rounded-xl border border-slate-100 shadow-3xs"
                   >
                     <span className="w-2.5 h-2.5 rounded-full border border-black/10 inline-block" style={{ backgroundColor: c.hex }}></span>
@@ -1386,9 +1497,9 @@ export default function AdminPortal({
 
               {/* Display variants badges */}
               <div className="flex flex-wrap gap-2 pt-1">
-                {variantsList.map((v) => (
+                {variantsList.map((v, idx) => (
                   <span 
-                    key={v}
+                    key={`${v}-${idx}`}
                     className="flex items-center gap-1.5 bg-white text-slate-600 font-mono font-semibold text-[10px] p-1.5 px-3 rounded-lg border border-slate-150"
                   >
                     {v}
@@ -1627,12 +1738,12 @@ export default function AdminPortal({
                 </div>
 
                 <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
-                  {categories.map((cat) => {
+                  {categories.map((cat, idx) => {
                     const associatedCount = products.filter(p => p.category === cat).length;
                     const isEditing = editingCategory === cat;
                     return (
                       <div 
-                        key={cat}
+                        key={`${cat}-${idx}`}
                         className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-50/50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800/85 hover:bg-white dark:hover:bg-slate-900 transition-all gap-3 shadow-sm"
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -1885,9 +1996,9 @@ export default function AdminPortal({
                       Aucun code promo n'est actuellement disponible.
                     </div>
                   ) : (
-                    promoCodes.map((promo) => (
+                    promoCodes.map((promo, idx) => (
                       <div 
-                        key={promo.code}
+                        key={promo.id || `${promo.code}-${idx}`}
                         className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50/50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800 hover:bg-white dark:hover:bg-slate-900 transition-all gap-3 shadow-sm"
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0 text-left">
@@ -2013,6 +2124,67 @@ export default function AdminPortal({
           </div>
 
           <div className="space-y-4">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-[#2d4a22] dark:text-emerald-450 font-mono border-b pb-1 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#2d4a22] dark:bg-emerald-400"></span>
+              Numéros de Paiement Manuel Mobile Money & Carte Visa
+            </h4>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-mono font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                  Numéros Wave Money (Séparés par /)
+                </label>
+                <input
+                  type="text"
+                  value={waveNumbers}
+                  onChange={(e) => setWaveNumbers(e.target.value)}
+                  placeholder="ex : 0704542909 / 0503654886"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-[#2d4a22]"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-mono font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                  Numéro Orange Money
+                </label>
+                <input
+                  type="text"
+                  value={orangeNumber}
+                  onChange={(e) => setOrangeNumber(e.target.value)}
+                  placeholder="ex : 0704542909"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-[#2d4a22]"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-mono font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                  Numéro MTN Mobile Money
+                </label>
+                <input
+                  type="text"
+                  value={mtnNumber}
+                  onChange={(e) => setMtnNumber(e.target.value)}
+                  placeholder="ex : 0503654886"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-[#2d4a22]"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-mono font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                  Numéro WhatsApp Carte Visa
+                </label>
+                <input
+                  type="text"
+                  value={visaWhatsAppNumber}
+                  onChange={(e) => setVisaWhatsAppNumber(e.target.value)}
+                  placeholder="ex : 0704542909"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-[#2d4a22]"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
             <h4 className="text-xs font-bold uppercase tracking-wider text-[#2d4a22] font-mono border-b pb-1">Informations Légales & Réassurance (Pied de page)</h4>
             
             <div className="grid grid-cols-1 gap-4">
@@ -2129,6 +2301,186 @@ export default function AdminPortal({
             </button>
           </div>
         </form>
+      ) : activeSubTab === "action_buttons" ? (
+        /* ACTION BUTTONS & CTA MANAGEMENT ENGINE */
+        <form
+          onSubmit={handleSaveConfigs}
+          className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-6 text-left sleek-shadow-lg"
+        >
+          <div className="border-b border-slate-100 dark:border-slate-800 pb-3 block">
+            <h3 className="font-sans font-bold text-slate-800 dark:text-white text-base tracking-tight flex items-center gap-2">
+              <Sliders className="w-5 h-5 text-[#2d4a22]" />
+              Gestion des Boutons d'Action & Appel à l'Action (CTA)
+            </h3>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Personnalisez les libellés, styles, destinations et visibilité des boutons principaux de la boutique.
+            </p>
+          </div>
+
+          {/* Bouton CTA 1 */}
+          <div className="bg-slate-50 dark:bg-slate-950/40 p-5 rounded-2xl border border-slate-150 dark:border-slate-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+              <h4 className="text-xs font-mono font-bold uppercase text-[#2d4a22] dark:text-emerald-450">Bouton Principal 1 (Hero CTA 1)</h4>
+              <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={btnCta1Active}
+                  onChange={(e) => setBtnCta1Active(e.target.checked)}
+                  className="rounded text-[#2d4a22] focus:ring-[#2d4a22]"
+                />
+                <span>Afficher ce bouton</span>
+              </label>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="block text-[10px] font-mono uppercase text-slate-400 font-bold">Texte du Bouton (Français)</label>
+                <input
+                  type="text"
+                  value={btnCta1Text}
+                  onChange={(e) => setBtnCta1Text(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-[10px] font-mono uppercase text-slate-400 font-bold">Texte du Bouton (Anglais)</label>
+                <input
+                  type="text"
+                  value={btnCta1TextEn}
+                  onChange={(e) => setBtnCta1TextEn(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-[10px] font-mono uppercase text-slate-400 font-bold">Ancrage / Target ID</label>
+                <select
+                  value={btnCta1Target}
+                  onChange={(e) => setBtnCta1Target(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs outline-none"
+                >
+                  <option value="pricing-plans">Catalogue & Produits (#pricing-plans)</option>
+                  <option value="interactive-model-sandbox">Simulateur & sur-mesure (#interactive-model-sandbox)</option>
+                  <option value="reviews-carousel">Avis & Témoignages (#reviews-carousel)</option>
+                  <option value="lead-form-section">Formulaire Devis (#lead-form-section)</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="block text-[10px] font-mono uppercase text-slate-400 font-bold">Style Visuel</label>
+                <select
+                  value={btnCta1Style}
+                  onChange={(e) => setBtnCta1Style(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs outline-none"
+                >
+                  <option value="primary">Vert Ébénisterie (Principal)</option>
+                  <option value="outline">Blanc / Contour Épuré</option>
+                  <option value="secondary">Sauge Doux / Vert Pastel</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Bouton CTA 2 */}
+          <div className="bg-slate-50 dark:bg-slate-950/40 p-5 rounded-2xl border border-slate-150 dark:border-slate-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+              <h4 className="text-xs font-mono font-bold uppercase text-[#2d4a22] dark:text-emerald-450">Bouton Secondaire 2 (Hero CTA 2)</h4>
+              <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={btnCta2Active}
+                  onChange={(e) => setBtnCta2Active(e.target.checked)}
+                  className="rounded text-[#2d4a22] focus:ring-[#2d4a22]"
+                />
+                <span>Afficher ce bouton</span>
+              </label>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="block text-[10px] font-mono uppercase text-slate-400 font-bold">Texte du Bouton (Français)</label>
+                <input
+                  type="text"
+                  value={btnCta2Text}
+                  onChange={(e) => setBtnCta2Text(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-[10px] font-mono uppercase text-slate-400 font-bold">Texte du Bouton (Anglais)</label>
+                <input
+                  type="text"
+                  value={btnCta2TextEn}
+                  onChange={(e) => setBtnCta2TextEn(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-[10px] font-mono uppercase text-slate-400 font-bold">Ancrage / Target ID</label>
+                <select
+                  value={btnCta2Target}
+                  onChange={(e) => setBtnCta2Target(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs outline-none"
+                >
+                  <option value="interactive-model-sandbox">Simulateur & sur-mesure (#interactive-model-sandbox)</option>
+                  <option value="pricing-plans">Catalogue & Produits (#pricing-plans)</option>
+                  <option value="reviews-carousel">Avis & Témoignages (#reviews-carousel)</option>
+                  <option value="lead-form-section">Formulaire Devis (#lead-form-section)</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="block text-[10px] font-mono uppercase text-slate-400 font-bold">Style Visuel</label>
+                <select
+                  value={btnCta2Style}
+                  onChange={(e) => setBtnCta2Style(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs outline-none"
+                >
+                  <option value="outline">Blanc / Contour Épuré</option>
+                  <option value="primary">Vert Ébénisterie (Principal)</option>
+                  <option value="secondary">Sauge Doux / Vert Pastel</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Bouton CTA 3: Submit Request dans le Customizer */}
+          <div className="bg-slate-50 dark:bg-slate-950/40 p-5 rounded-2xl border border-slate-150 dark:border-slate-800 space-y-4">
+            <h4 className="text-xs font-mono font-bold uppercase text-[#2d4a22] dark:text-emerald-450">Bouton Valider Simulateur (Interactive Model Submit)</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="block text-[10px] font-mono uppercase text-slate-400 font-bold">Texte FR</label>
+                <input
+                  type="text"
+                  value={btnCta3Text}
+                  onChange={(e) => setBtnCta3Text(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-[10px] font-mono uppercase text-slate-400 font-bold">Texte EN</label>
+                <input
+                  type="text"
+                  value={btnCta3TextEn}
+                  onChange={(e) => setBtnCta3TextEn(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+            <button
+              type="submit"
+              disabled={isSavingConfigs}
+              className="py-3.5 px-8 bg-[#2d4a22] hover:bg-emerald-800 text-white font-bold text-xs uppercase tracking-widest rounded-2xl transition-all cursor-pointer shadow-md flex items-center gap-2"
+            >
+              {isSavingConfigs ? (
+                <span>Enregistrement...</span>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Enregistrer les Boutons CTA</span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
       ) : activeSubTab === "orders" ? (
         /* CUSTOM CLIENT STANDARD PURCHASE ORDERS LIST */
         <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-6 sleek-shadow-md text-left animate-fadeIn">
@@ -2143,11 +2495,11 @@ export default function AdminPortal({
           </div>
 
           <div className="space-y-4">
-            {regularOrders.map((ord: any) => {
+            {regularOrders.map((ord: any, idx: number) => {
               const isExpanded = !!expandedOrders[ord.id];
               return (
                 <div 
-                  key={ord.id} 
+                  key={ord.id || `ord-${idx}`} 
                   className="bg-slate-50/60 dark:bg-slate-950/40 border border-slate-200/50 dark:border-slate-800/80 rounded-2xl p-4 md:p-5 space-y-4 shadow-3xs transition-all duration-300"
                 >
                   {/* Collapsible Header row */}
@@ -2171,7 +2523,7 @@ export default function AdminPortal({
                     <div className="flex items-center justify-between sm:justify-end gap-4 min-w-[200px]">
                       <div className="text-left sm:text-right font-sans">
                         <span className="text-base font-mono font-black text-slate-900 dark:text-slate-100 block">
-                          {ord.total ? `${ord.total.toLocaleString()} F CFA` : "Contact requis"}
+                          {ord.total ? formatOrderTotal(ord.total, "CFA") : "Contact requis"}
                         </span>
                         <span className="text-[9px] text-slate-400 font-mono block">
                           {ord.createdAt ? new Date(ord.createdAt.seconds ? ord.createdAt.seconds * 1000 : ord.createdAt).toLocaleString("fr-FR") : "Récente"}
@@ -2320,7 +2672,7 @@ export default function AdminPortal({
                                 </div>
                               </div>
                               <span className="font-mono font-bold text-[#2d4a22] dark:text-emerald-450 whitespace-nowrap">
-                                {it.price ? `${it.price.toLocaleString()} F CFA` : ""}
+                                {it.price ? formatOrderTotal(it.price, "CFA") : ""}
                               </span>
                             </div>
                           ))}
@@ -2387,7 +2739,7 @@ export default function AdminPortal({
           </div>
 
           <div className="space-y-3.5">
-            {productRequests.map((req: any) => {
+            {productRequests.map((req: any, idx: number) => {
               const dateStr = req.createdAt
                 ? new Date(req.createdAt.seconds ? req.createdAt.seconds * 1000 : req.createdAt).toLocaleString("fr-FR", {
                     day: "2-digit",
@@ -2400,7 +2752,7 @@ export default function AdminPortal({
 
               return (
                 <div 
-                  key={req.id} 
+                  key={req.id || `req-${idx}`} 
                   onClick={() => handleOpenRequest(req)}
                   className="group/card bg-slate-50/50 hover:bg-slate-50 dark:bg-slate-950/40 dark:hover:bg-slate-950/80 border border-slate-100 hover:border-[#e2eae0] dark:border-slate-850 dark:hover:border-slate-800 rounded-2xl p-4 transition-all duration-300 cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-4 relative shadow-3xs"
                 >
@@ -2429,9 +2781,9 @@ export default function AdminPortal({
                   {/* Right: Budget & Viewed Status badge & Action buttons */}
                   <div className="flex items-center justify-between md:justify-end gap-4 shrink-0">
                     <div className="text-left md:text-right font-sans">
-                      <span className="text-xs text-slate-400 uppercase tracking-widest block font-mono text-[9px]">Budget Estimatif</span>
+                      <span className="text-xs text-slate-400 uppercase tracking-widest block font-mono text-[9px]">Prix Désigné Client</span>
                       <span className="text-sm font-mono font-extrabold text-[#2d4a22] dark:text-emerald-450 block">
-                        {req.estimatedBudget ? `${req.estimatedBudget.toLocaleString()} FCFA` : "Devis en attente"}
+                        {req.estimatedBudget ? formatBespokePrice(req.estimatedBudget, "CFA") : "Devis en attente"}
                       </span>
                     </div>
 
@@ -2455,12 +2807,12 @@ export default function AdminPortal({
                       <button
                         type="button"
                         disabled={deletingRequestId === req.id}
-                        onClick={(e) => handleDeleteRequest(req.id, e)}
-                        className="p-2.5 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-slate-400 hover:text-rose-500 rounded-xl transition-all cursor-pointer flex items-center justify-center min-w-[36px] h-[36px] border border-transparent hover:border-rose-101 dark:hover:border-rose-900/40"
-                        title="Supprimer la demande"
+                        onClick={(e) => triggerDeleteRequest(req, e)}
+                        className="p-2.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white dark:bg-rose-950/30 dark:hover:bg-rose-900 rounded-xl transition-all cursor-pointer flex items-center justify-center min-w-[36px] h-[36px] border border-rose-100 dark:border-rose-900/40"
+                        title="Supprimer définitivement cette demande"
                       >
                         {deletingRequestId === req.id ? (
-                          <div className="w-3.5 h-3.5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+                          <div className="w-3.5 h-3.5 border-2 border-rose-500 border-t-transparent rounded-full animate-spin"></div>
                         ) : (
                           <Trash2 className="w-4 h-4" />
                         )}
@@ -2581,9 +2933,9 @@ export default function AdminPortal({
                             <span className="font-black text-amber-600 font-sans">{selectedRequest.desiredDelay || "Cette semaine"}</span>
                           </p>
                           <p>
-                            <span className="font-bold text-slate-455 uppercase text-[9px] font-mono mr-2">Budget :</span>
+                            <span className="font-bold text-slate-455 uppercase text-[9px] font-mono mr-2">Prix Désigné Client :</span>
                             <span className="font-black text-[#2d4a22] dark:text-emerald-455 font-mono text-sm">
-                              {selectedRequest.estimatedBudget ? `${selectedRequest.estimatedBudget.toLocaleString()} FCFA` : "Devis en attente"}
+                              {selectedRequest.estimatedBudget ? formatBespokePrice(selectedRequest.estimatedBudget, "CFA") : "Devis en attente"}
                             </span>
                           </p>
                         </div>
@@ -2623,23 +2975,41 @@ export default function AdminPortal({
                       </div>
                     </div>
 
-                    {/* Contact integration and toggle viewed */}
-                    <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
-                      {/* Mark Viewed Action */}
-                      <button
-                        type="button"
-                        onClick={(e) => handleToggleRequestViewed(selectedRequest, e)}
-                        className={`w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer transition-colors border ${
-                          selectedRequest.viewed
-                            ? "bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-850 text-slate-500 border-slate-200 dark:border-slate-700"
-                            : "bg-amber-600 hover:bg-amber-700 text-white border-transparent"
-                        }`}
-                      >
-                        <Check className="w-4 h-4" />
-                        {selectedRequest.viewed ? "Marquer non vue" : "Marquer comme Traitée / Vue"}
-                      </button>
+                    {/* Contact integration and toggle viewed & delete */}
+                    <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
+                      <div className="flex w-full sm:w-auto items-center gap-2">
+                        {/* Mark Viewed Action */}
+                        <button
+                          type="button"
+                          onClick={(e) => handleToggleRequestViewed(selectedRequest, e)}
+                          className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer transition-colors border ${
+                            selectedRequest.viewed
+                              ? "bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-850 text-slate-500 border-slate-200 dark:border-slate-700"
+                              : "bg-amber-600 hover:bg-amber-700 text-white border-transparent"
+                          }`}
+                        >
+                          <Check className="w-4 h-4" />
+                          {selectedRequest.viewed ? "Marquer non vue" : "Marquer Traitée"}
+                        </button>
 
-                      {/* External actions (WhatsApp, Mail) */}
+                        {/* Delete Request from Modal */}
+                        <button
+                          type="button"
+                          disabled={deletingRequestId === selectedRequest.id}
+                          onClick={(e) => triggerDeleteRequest(selectedRequest, e)}
+                          className="px-3 py-2.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white dark:bg-rose-950/30 dark:hover:bg-rose-900 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold border border-rose-100 dark:border-rose-900/40"
+                          title="Supprimer ce dossier"
+                        >
+                          {deletingRequestId === selectedRequest.id ? (
+                            <div className="w-3.5 h-3.5 border-2 border-rose-500 border-t-transparent rounded-full animate-spin"></div>
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
+                          <span className="hidden sm:inline">Supprimer</span>
+                        </button>
+                      </div>
+
+                      {/* External actions (WhatsApp, Mail, Phone) */}
                       <div className="flex w-full sm:w-auto gap-2">
                         {selectedRequest.contactValue && selectedRequest.contactChannel === "whatsapp" && (
                           <a
@@ -2670,6 +3040,93 @@ export default function AdminPortal({
                       </div>
                     </div>
 
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+
+          {/* DOUBLE VERIFICATION DELETE MODAL */}
+          <AnimatePresence>
+            {requestToDelete && (
+              <div className="fixed inset-0 z-60 flex items-center justify-center p-4">
+                {/* Backdrop overlay */}
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setRequestToDelete(null)}
+                  className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs"
+                />
+
+                {/* Confirmation Box */}
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                  className="bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/50 rounded-3xl w-full max-w-md relative z-10 shadow-2xl p-6 md:p-7 space-y-5 text-left"
+                >
+                  <div className="flex items-center gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+                    <div className="p-3 bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 rounded-2xl shrink-0">
+                      <AlertTriangle className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-black text-slate-900 dark:text-white">
+                        Double Validation de Suppression
+                      </h3>
+                      <p className="text-[11px] text-slate-400 font-mono">
+                        Dossier : {requestToDelete.id}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Request Details Summary Card */}
+                  <div className="bg-slate-50 dark:bg-slate-950/70 p-3.5 rounded-2xl border border-slate-200/60 dark:border-slate-800 text-xs space-y-2">
+                    <div className="flex justify-between items-center font-bold">
+                      <span className="text-slate-900 dark:text-slate-100 font-mono">
+                        {requestToDelete.category || "Meuble Sur-Mesure"}
+                      </span>
+                      <span className="text-[#2d4a22] dark:text-emerald-400 font-mono font-extrabold">
+                        {requestToDelete.estimatedBudget ? formatBespokePrice(requestToDelete.estimatedBudget, "CFA") : "Prix non fixé"}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-0.5">
+                      <p><strong>Contact :</strong> {requestToDelete.contactValue || "Non renseigné"} ({requestToDelete.contactChannel || "Direct"})</p>
+                      <p><strong>Statut :</strong> {requestToDelete.viewed ? "Vue / Traitée" : "En attente"}</p>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-600 dark:text-slate-300 font-sans leading-relaxed">
+                    Êtes-vous absolument certain de vouloir supprimer définitivement cette demande sur-mesure ? Cette action retirera la demande du système et mettra à jour vos données analytiques.
+                  </p>
+
+                  <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <button
+                      type="button"
+                      disabled={deletingRequestId === requestToDelete.id}
+                      onClick={() => setRequestToDelete(null)}
+                      className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deletingRequestId === requestToDelete.id}
+                      onClick={() => confirmDeleteRequest(requestToDelete)}
+                      className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-extrabold transition-all cursor-pointer shadow-md shadow-rose-600/20 flex items-center gap-2"
+                    >
+                      {deletingRequestId === requestToDelete.id ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          Suppression...
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="w-4 h-4" />
+                          Confirmer la Suppression
+                        </>
+                      )}
+                    </button>
                   </div>
                 </motion.div>
               </div>

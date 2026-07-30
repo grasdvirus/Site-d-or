@@ -36,7 +36,11 @@ import {
   ArrowUp,
   Star,
   Truck,
-  Award
+  Award,
+  Phone,
+  PhoneCall,
+  MessageSquare,
+  CreditCard
 } from "lucide-react";
 
 import InteractiveModel from "./components/InteractiveModel";
@@ -48,7 +52,8 @@ import { INITIAL_PRODUCTS } from "./data";
 import { Product, CartItem, PromoCode } from "./types";
 import { db, auth, googleProvider, signInWithPopup, signOut, handleFirestoreError, GoogleAuthProvider, OperationType } from "./firebase";
 import { collection, query, getDocs, getDoc, doc, setDoc, deleteDoc, serverTimestamp, where, addDoc } from "firebase/firestore";
-import { TRANSLATIONS, Language, Theme, Currency, formatPrice, CURRENCIES } from "./translations";
+import { TRANSLATIONS, Language, Theme, Currency, formatPrice, formatOrderTotal, formatBespokePrice, CURRENCIES } from "./translations";
+import { triggerOrderCelebration } from "./utils/confetti";
 
 
 export default function App() {
@@ -63,6 +68,10 @@ export default function App() {
     heroSub?: string;
     heroDesc?: string;
     faq?: { question: string; answer: string }[];
+    waveNumbers?: string;
+    orangeNumber?: string;
+    mtnNumber?: string;
+    visaWhatsAppNumber?: string;
   } | null>(null);
   
   // Auth & UI States
@@ -70,6 +79,7 @@ export default function App() {
   const [authChecking, setAuthChecking] = useState(true);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [myOrders, setMyOrders] = useState<any[]>([]);
+  const [myBespokeRequests, setMyBespokeRequests] = useState<any[]>([]);
   const [allOrders, setAllOrders] = useState<any[]>([]);
   const [isDbLoading, setIsDbLoading] = useState(false);
 
@@ -117,6 +127,7 @@ export default function App() {
 
   // Drawer states
   const [cartOpen, setCartOpen] = useState(false);
+  const [isContactModalOpen, setIsContactModalOpen] = useState(false);
   const [selectedProductForDetails, setSelectedProductForDetails] = useState<Product | null>(null);
 
   // Promo code states
@@ -140,7 +151,7 @@ export default function App() {
   });
 
   // Checkout states
-  const [checkoutStep, setCheckoutStep] = useState<"idle" | "form" | "confirm">("idle");
+  const [checkoutStep, setCheckoutStep] = useState<"idle" | "form" | "payment" | "confirm">("idle");
   const [shippingAddress, setShippingAddress] = useState({
     fullName: "",
     address: "",
@@ -152,6 +163,15 @@ export default function App() {
     cvv: "325"
   });
   const [orderTracking, setOrderTracking] = useState("");
+
+  // Manual payment states
+  const [selectedPaymentOp, setSelectedPaymentOp] = useState<"wave" | "orange" | "mtn">("wave");
+  const [depositConfirmed, setDepositConfirmed] = useState(false);
+  const [isValidatingTransfer, setIsValidatingTransfer] = useState(false);
+  const [validationProgress, setValidationProgress] = useState(0);
+  const [validationSecondsLeft, setValidationSecondsLeft] = useState(60);
+  const [isVisaModalOpen, setIsVisaModalOpen] = useState(false);
+  const [copiedNumberToast, setCopiedNumberToast] = useState<string | null>(null);
 
   // Favorites spotlight demo item state
   const [spotlightQty, setSpotlightQty] = useState(1);
@@ -282,6 +302,44 @@ export default function App() {
     };
     fetchMyOrders();
   }, [user, checkoutStep]);
+
+  // Sync user custom requests (sur-mesure) history from Firestore
+  useEffect(() => {
+    if (!user) {
+      setMyBespokeRequests([]);
+      return;
+    }
+    const fetchMyBespokeRequests = async () => {
+      let fetched: any[] = [];
+      try {
+        const q = query(collection(db, "product_requests"), where("userId", "==", user.uid));
+        const querySnapshot = await getDocs(q);
+        querySnapshot.forEach((docSnap) => {
+          fetched.push(docSnap.data());
+        });
+      } catch (err: any) {
+        console.warn("Firestore offline - user bespoke requests history using local backup:", err);
+      }
+
+      // Check local storage backup & deleted blacklist
+      try {
+        const deletedIds: string[] = JSON.parse(localStorage.getItem("nexus_deleted_product_request_ids") || "[]");
+        const localReqs = JSON.parse(localStorage.getItem("nexus_local_product_requests") || "[]");
+        const userLocal = localReqs.filter((r: any) => r.userId === user.uid || r.userId === "anonymous");
+        userLocal.forEach((lr: any) => {
+          if (!fetched.some((f: any) => f.id === lr.id)) {
+            fetched.push(lr);
+          }
+        });
+        fetched = fetched.filter((f: any) => !deletedIds.includes(f.id));
+      } catch (e) {
+        console.warn("Error reading local bespoke requests:", e);
+      }
+
+      setMyBespokeRequests(fetched);
+    };
+    fetchMyBespokeRequests();
+  }, [user, userDropdownOpen]);
 
   // Sync all orders for the admin from Firestore
   useEffect(() => {
@@ -722,11 +780,50 @@ export default function App() {
   const shippingCharge = subtotal === 0 ? 0 : (2000 / currentRate);
   const grandTotal = Math.max(0, subtotal - discountAmount + shippingCharge);
 
+  // Timer effect for 1-minute transfer validation progress
+  useEffect(() => {
+    let timer: any = null;
+    if (isValidatingTransfer) {
+      setValidationProgress(0);
+      setValidationSecondsLeft(60);
+      const startTime = Date.now();
+      const totalDuration = 60 * 1000; // 60 seconds (1 minute)
+
+      timer = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const pct = Math.min(100, (elapsed / totalDuration) * 100);
+        const secsLeft = Math.max(0, Math.ceil((totalDuration - elapsed) / 1000));
+
+        setValidationProgress(pct);
+        setValidationSecondsLeft(secsLeft);
+
+        if (pct >= 100) {
+          clearInterval(timer);
+          setIsValidatingTransfer(false);
+          // Complete final submission & explode confetti!
+          executeFinalOrderSubmission(`Mobile Money (${selectedPaymentOp.toUpperCase()})`);
+        }
+      }, 250);
+    } else {
+      setValidationProgress(0);
+      setValidationSecondsLeft(60);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isValidatingTransfer, selectedPaymentOp]);
+
+  const handleCopyNumber = (numStr: string) => {
+    navigator.clipboard.writeText(numStr);
+    setCopiedNumberToast(numStr);
+    setTimeout(() => setCopiedNumberToast(null), 2500);
+  };
+
   const handleLaunchCheckout = () => {
     setCheckoutStep("form");
   };
 
-  const handleSubmitCheckout = async (e: React.FormEvent) => {
+  const handleProceedToPayment = (e: React.FormEvent) => {
     e.preventDefault();
     if (!shippingAddress.fullName || !shippingAddress.address || !shippingAddress.city) {
       alert(lang === "en" ? "Please fill required fields" : "Veuillez renseigner les champs requis.");
@@ -735,6 +832,20 @@ export default function App() {
 
     if (!user) {
       alert(lang === "en" ? "Kindly authenticate before checkout." : "Veuillez vous connecter pour valider votre commande.");
+      return;
+    }
+
+    setCheckoutStep("payment");
+  };
+
+  const executeFinalOrderSubmission = async (paymentMethodName: string = "Mobile Money") => {
+    if (!shippingAddress.fullName || !shippingAddress.address || !shippingAddress.city) {
+      alert("Veuillez remplir les informations de livraison.");
+      return;
+    }
+
+    if (!user) {
+      alert("Veuillez vous connecter pour valider votre commande.");
       return;
     }
 
@@ -750,6 +861,7 @@ export default function App() {
         zip: shippingAddress.zip || "",
         phone: shippingAddress.phone || "",
         email: shippingAddress.email || "",
+        paymentMethod: paymentMethodName,
         items: cart.map(item => ({
           productId: item.product.id,
           name: item.product.name,
@@ -762,12 +874,13 @@ export default function App() {
         discount: activeDiscount,
         shipping: shippingCharge,
         total: grandTotal,
-        createdAt: serverTimestamp() // Set dynamically on server to preserve temporal integrity
+        createdAt: serverTimestamp()
       };
 
       await setDoc(doc(db, "orders", orderId), orderDoc);
       setOrderTracking(orderId);
       setCheckoutStep("confirm");
+      triggerOrderCelebration();
     } catch (err: any) {
       console.error("Failed to place order in Firestore:", err);
       try {
@@ -777,6 +890,10 @@ export default function App() {
         alert(`Erreur de paiement Firestore: ${payload.message}\n${payload.details || ""}`);
       }
     }
+  };
+
+  const handleSubmitCheckout = async (e: React.FormEvent) => {
+    handleProceedToPayment(e);
   };
 
   const handleFinishCheckout = () => {
@@ -1068,21 +1185,41 @@ export default function App() {
 
                 {/* Main Action CTAs */}
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3.5">
-                  <button 
-                    type="button"
-                    onClick={() => handleScrollToId("pricing-plans")}
-                    className="bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-[10px] uppercase tracking-widest px-7 py-4 rounded-xl shadow-md cursor-pointer transition-all flex items-center justify-center gap-2 select-none"
-                  >
-                    {t.heroViewCollection}
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => handleScrollToId("interactive-model-sandbox")}
-                    className="bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-extrabold text-[10px] uppercase tracking-widest px-7 py-4 rounded-xl transition-all cursor-pointer text-center select-none"
-                  >
-                    {t.heroStartAtelier}
-                  </button>
+                  {siteConfig?.btnCta1Active !== false && (
+                    <button 
+                      type="button"
+                      onClick={() => handleScrollToId(siteConfig?.btnCta1Target || "pricing-plans")}
+                      className={`font-extrabold text-[10px] uppercase tracking-widest px-7 py-4 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-2 select-none ${
+                        siteConfig?.btnCta1Style === 'outline'
+                          ? "bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300"
+                          : siteConfig?.btnCta1Style === 'secondary'
+                          ? "bg-emerald-100 hover:bg-emerald-200 text-emerald-900 shadow-sm"
+                          : "bg-[#2d4a22] hover:bg-[#1a2d15] text-white shadow-md"
+                      }`}
+                    >
+                      {lang === 'en' 
+                        ? (siteConfig?.btnCta1TextEn || "Discover the Collection") 
+                        : (siteConfig?.btnCta1Text || t.heroViewCollection)}
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  )}
+                  {siteConfig?.btnCta2Active !== false && (
+                    <button 
+                      type="button"
+                      onClick={() => handleScrollToId(siteConfig?.btnCta2Target || "interactive-model-sandbox")}
+                      className={`font-extrabold text-[10px] uppercase tracking-widest px-7 py-4 rounded-xl transition-all cursor-pointer text-center select-none ${
+                        siteConfig?.btnCta2Style === 'primary'
+                          ? "bg-[#2d4a22] hover:bg-[#1a2d15] text-white shadow-md"
+                          : siteConfig?.btnCta2Style === 'secondary'
+                          ? "bg-emerald-100 hover:bg-emerald-200 text-emerald-900 shadow-sm"
+                          : "bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300"
+                      }`}
+                    >
+                      {lang === 'en' 
+                        ? (siteConfig?.btnCta2TextEn || "Start Customizing") 
+                        : (siteConfig?.btnCta2Text || t.heroStartAtelier)}
+                    </button>
+                  )}
                 </div>
 
                 <div className="mt-5 flex items-center gap-3 overflow-x-auto no-scrollbar scroll-smooth snap-x py-1.5 px-0.5">
@@ -1444,11 +1581,11 @@ export default function App() {
 
                         <div className="space-y-4 text-left">
                           <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                            {promoCodes.map((p) => {
+                            {promoCodes.map((p, idx) => {
                               const isApplied = appliedCodeName.includes(p.code);
                               return (
                                 <button
-                                  key={p.code}
+                                  key={p.id || `${p.code}-${idx}`}
                                   type="button"
                                   onClick={() => {
                                     if (p.status === 'active') {
@@ -1843,7 +1980,7 @@ export default function App() {
             </section>
 
             {/* INDIVIDUALIZED CUSTOMIZER ATELIER */}
-            <section className="space-y-6 pt-6">
+            <section id="interactive-model-sandbox" className="space-y-6 pt-6 scroll-mt-24">
               <div className="text-left space-y-2">
                 <span className="text-[10px] uppercase font-mono font-bold tracking-widest text-[#2d4a22] dark:text-emerald-450">
                   {lang === 'en' ? "Bespoke Manufacturing" : lang === 'es' ? "Hecho a Medida" : lang === 'ar' ? "صناعة وتفصيل يدوي" : "Manufacture sur-mesure"}
@@ -1864,6 +2001,7 @@ export default function App() {
                 currency={currency} 
                 customOptions={customOptions}
                 currentUser={user}
+                siteConfig={siteConfig}
               />
             </section>
 
@@ -1914,13 +2052,35 @@ export default function App() {
 
           <div className="space-y-3 text-left">
             <h4 className="text-[10px] font-mono uppercase font-bold tracking-wider text-slate-800 dark:text-slate-350">
-              {lang === 'en' ? "Support & Logistics" : lang === 'es' ? "Soporte de Envíos" : lang === 'ar' ? "الدعم الفني والتسليم" : "Support & Livraison"}
+              {lang === 'en' ? "Support & Contact Direct" : lang === 'es' ? "Soporte y Contacto Directo" : lang === 'ar' ? "الدعم الفني والاتصال المباشر" : "Support & Contact Direct"}
             </h4>
             <p className="leading-relaxed font-medium">
-              {siteConfig?.footerContact || (lang === 'en' ? "Secure global express shipping in customized reinforced double-wall wooden cases. Warm responsive support via email within 24h." : lang === 'es' ? "Entrega nacional asegurada en embalajes reforzados. Soporte rápido vía correo electrónico." : lang === 'ar' ? "توصيل وتسليم آمن ومضمون في طروض خشبية معززة خصيصاً لمقعدك. خدمة عملاء دافئة وسريعة." : "Livraison nationale sécurisée dans des emballages renforcés sur-mesure. Service client réactif et chaleureux par mail sous 24h.")}
+              {siteConfig?.footerContact || (lang === 'en' ? "Secure delivery and responsive customer support. Click below to reach us via phone call or WhatsApp." : "Livraison nationale sécurisée et service client réactif. Cliquez ci-dessous pour nous joindre directement par appel téléphonique ou message WhatsApp.")}
             </p>
-            <div className="text-[#2d4a22] dark:text-[#84a98c] font-bold">
-              E-mail : contact@nexus-atelier.fr
+            <div className="space-y-2 pt-1 font-mono text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400 font-medium">E-mail :</span>
+                <a 
+                  href="mailto:devcristan3@gmail.com" 
+                  className="text-[#2d4a22] dark:text-[#84a98c] font-extrabold hover:underline transition-all flex items-center gap-1.5"
+                  title="Envoyer un e-mail à devcristan3@gmail.com"
+                >
+                  <Mail className="w-3.5 h-3.5 shrink-0" />
+                  devcristan3@gmail.com
+                </a>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400 font-medium">Contact :</span>
+                <button
+                  type="button"
+                  onClick={() => setIsContactModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 text-[#2d4a22] dark:text-emerald-400 font-black hover:text-emerald-700 dark:hover:text-emerald-300 transition-all cursor-pointer underline decoration-dotted underline-offset-4 bg-[#2d4a22]/5 dark:bg-emerald-950/40 px-2.5 py-1 rounded-xl border border-[#2d4a22]/10 dark:border-emerald-800/30"
+                  title="Cliquer pour choisir entre Appel direct ou WhatsApp"
+                >
+                  <Phone className="w-3.5 h-3.5 shrink-0 text-emerald-600 dark:text-emerald-400 animate-pulse" />
+                  +225 07 04 54 29 09
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1938,6 +2098,86 @@ export default function App() {
 
         </div>
       </footer>
+
+      {/* PHONE & WHATSAPP CONTACT CHOICE MODAL */}
+      <AnimatePresence>
+        {isContactModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsContactModalOpen(false)}
+              className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-sm relative z-10 p-6 shadow-2xl space-y-5 text-left"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 bg-[#2d4a22]/10 dark:bg-emerald-950/80 text-[#2d4a22] dark:text-emerald-400 rounded-2xl">
+                    <PhoneCall className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                      Contact Atelier sitedor
+                    </h3>
+                    <p className="text-[11px] font-mono text-slate-400">
+                      +225 07 04 54 29 09
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsContactModalOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-600 dark:text-slate-300 font-sans leading-relaxed">
+                Comment souhaitez-vous contacter notre service client et atelier ?
+              </p>
+
+              <div className="space-y-3 pt-1">
+                <a
+                  href="tel:+2250704542909"
+                  onClick={() => setIsContactModalOpen(false)}
+                  className="w-full py-3 px-4 bg-[#2d4a22] hover:bg-[#1e3217] text-white rounded-2xl font-extrabold text-xs flex items-center justify-center gap-2.5 transition-all shadow-md shadow-[#2d4a22]/20 cursor-pointer"
+                >
+                  <Phone className="w-4 h-4" />
+                  Appeler directement (+225 0704542909)
+                </a>
+
+                <a
+                  href="https://wa.me/2250704542909?text=Bonjour%20sitedor,%20je%20souhaite%20des%20informations%20sur%20vos%20cr%C3%A9ations."
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setIsContactModalOpen(false)}
+                  className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-extrabold text-xs flex items-center justify-center gap-2.5 transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  Envoyer un message WhatsApp
+                </a>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-center">
+                <button
+                  type="button"
+                  onClick={() => setIsContactModalOpen(false)}
+                  className="text-xs font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
+                >
+                  Fermer
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* SHOPPING CART SIDEPANEL DRAWER */}
       <AnimatePresence>
@@ -2129,6 +2369,200 @@ export default function App() {
                       </div>
 
                     </form>
+                  ) : checkoutStep === "payment" ? (
+                    /* Manual Payment Section */
+                    <div className="space-y-4 text-left">
+                      <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                        <button 
+                          type="button" 
+                          onClick={() => setCheckoutStep("form")} 
+                          className="text-xs font-bold text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:underline cursor-pointer"
+                        >
+                          &larr; Adresse de livraison
+                        </button>
+                        <span className="text-[10px] font-mono uppercase bg-[#2d4a22]/10 dark:bg-emerald-950/40 text-[#2d4a22] dark:text-emerald-400 font-extrabold px-2.5 py-1 rounded-full">
+                          Étape 2/2 : Règlement
+                        </span>
+                      </div>
+
+                      <div className="bg-[#2d4a22]/5 dark:bg-slate-900 border border-[#2d4a22]/15 dark:border-slate-800 p-3.5 rounded-2xl space-y-1">
+                        <p className="text-[10px] font-mono uppercase font-bold text-slate-500 dark:text-slate-400 tracking-wider">Montant total de la commande</p>
+                        <p className="text-xl font-mono font-black text-[#2d4a22] dark:text-emerald-400">
+                          {formatOrderTotal(grandTotal, currency)}
+                        </p>
+                      </div>
+
+                      {/* Payment method selector */}
+                      <div className="space-y-2">
+                        <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                          1. Choisissez votre opérateur Mobile Money :
+                        </label>
+                        <div className="grid grid-cols-3 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => { setSelectedPaymentOp("wave"); setDepositConfirmed(false); }}
+                            className={`p-2.5 rounded-xl border text-xs font-extrabold flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                              selectedPaymentOp === "wave"
+                                ? "bg-sky-50 dark:bg-sky-950/40 border-sky-500 text-sky-700 dark:text-sky-300 ring-2 ring-sky-500/20 shadow-xs"
+                                : "bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300"
+                            }`}
+                          >
+                            <span className="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
+                            <span>Wave</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => { setSelectedPaymentOp("orange"); setDepositConfirmed(false); }}
+                            className={`p-2.5 rounded-xl border text-xs font-extrabold flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                              selectedPaymentOp === "orange"
+                                ? "bg-amber-50 dark:bg-amber-950/40 border-amber-500 text-amber-800 dark:text-amber-300 ring-2 ring-amber-500/20 shadow-xs"
+                                : "bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300"
+                            }`}
+                          >
+                            <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                            <span>Orange</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => { setSelectedPaymentOp("mtn"); setDepositConfirmed(false); }}
+                            className={`p-2.5 rounded-xl border text-xs font-extrabold flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                              selectedPaymentOp === "mtn"
+                                ? "bg-yellow-50 dark:bg-yellow-950/40 border-yellow-500 text-yellow-800 dark:text-yellow-300 ring-2 ring-yellow-500/20 shadow-xs"
+                                : "bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300"
+                            }`}
+                          >
+                            <span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>
+                            <span>MTN</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Operator Number Card */}
+                      <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">
+                            Numéro de Dépôt {selectedPaymentOp.toUpperCase()} :
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyNumber(
+                              selectedPaymentOp === "wave"
+                                ? (siteConfig?.waveNumbers || "0704542909 / 0503654886")
+                                : selectedPaymentOp === "orange"
+                                ? (siteConfig?.orangeNumber || "0704542909")
+                                : (siteConfig?.mtnNumber || "0503654886")
+                            )}
+                            className="text-[10px] font-mono font-bold text-[#2d4a22] dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+                          >
+                            {copiedNumberToast ? "✓ Copié !" : "Copier"}
+                          </button>
+                        </div>
+                        <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl font-mono text-base font-extrabold text-[#2d4a22] dark:text-emerald-400 text-center select-all">
+                          {selectedPaymentOp === "wave" && (siteConfig?.waveNumbers || "0704542909 / 0503654886")}
+                          {selectedPaymentOp === "orange" && (siteConfig?.orangeNumber || "0704542909")}
+                          {selectedPaymentOp === "mtn" && (siteConfig?.mtnNumber || "0503654886")}
+                        </div>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed italic">
+                          Effectuez manuellement votre dépôt de {formatPrice(grandTotal, currency)} sur ce numéro depuis votre téléphone portable.
+                        </p>
+                      </div>
+
+                      {/* Interactive Two Buttons Section */}
+                      <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                        <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                          2. Validation et suivi du transfert :
+                        </label>
+
+                        {/* Button 1 / Checkbox Toggle */}
+                        <button
+                          type="button"
+                          onClick={() => setDepositConfirmed(!depositConfirmed)}
+                          disabled={isValidatingTransfer}
+                          className={`w-full p-3.5 rounded-xl border text-xs font-bold transition-all text-left flex items-center justify-between cursor-pointer ${
+                            depositConfirmed
+                              ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500 text-emerald-900 dark:text-emerald-200 shadow-xs"
+                              : "bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all ${
+                              depositConfirmed ? "bg-emerald-600 border-emerald-600 text-white" : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
+                            }`}>
+                              {depositConfirmed && <span className="text-xs font-black">✓</span>}
+                            </div>
+                            <span className="font-semibold">avez vous effectuer le dépôt</span>
+                          </div>
+                          <span className="text-[10px] font-mono text-slate-400 font-normal">
+                            {depositConfirmed ? "Sélectionné ✓" : "Cliquer pour cocher"}
+                          </span>
+                        </button>
+
+                        {/* Button 2: "Cliquer pour la validation du transfert" */}
+                        <button
+                          type="button"
+                          disabled={!depositConfirmed || isValidatingTransfer}
+                          onClick={() => {
+                            if (!depositConfirmed) {
+                              alert("Veuillez d'abord cocher 'avez vous effectuer le dépôt' pour continuer.");
+                              return;
+                            }
+                            setIsValidatingTransfer(true);
+                          }}
+                          className={`w-full py-3.5 px-4 rounded-xl font-extrabold text-xs uppercase tracking-wider shadow-sm transition-all flex items-center justify-center gap-2 select-none ${
+                            !depositConfirmed || isValidatingTransfer
+                              ? "bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed"
+                              : "bg-[#2d4a22] hover:bg-[#1a2d15] text-white cursor-pointer active:scale-98"
+                          }`}
+                        >
+                          <span>cliquer pour la validation du transfert</span>
+                        </button>
+
+                        {/* Minimalist Progress Bar Loading (1 minute) */}
+                        {isValidatingTransfer && (
+                          <motion.div
+                            initial={{ opacity: 0, y: 5 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="p-4 bg-emerald-50/80 dark:bg-slate-900 border border-emerald-300 dark:border-emerald-800/80 rounded-2xl space-y-2 text-left"
+                          >
+                            <div className="flex items-center justify-between text-xs font-mono font-bold text-[#2d4a22] dark:text-emerald-400">
+                              <span className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                                Vérification du transfert en cours...
+                              </span>
+                              <span>{Math.round(validationProgress)}%</span>
+                            </div>
+
+                            {/* Minimalist Progress Bar Track */}
+                            <div className="w-full h-2.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden p-0.5 border border-emerald-200 dark:border-emerald-900">
+                              <motion.div
+                                className="h-full bg-gradient-to-r from-[#2d4a22] to-emerald-500 rounded-full"
+                                style={{ width: `${validationProgress}%` }}
+                                transition={{ ease: "linear" }}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                              <span>Validation dans :</span>
+                              <span className="font-bold text-[#2d4a22] dark:text-emerald-400">{validationSecondsLeft} secondes</span>
+                            </div>
+                          </motion.div>
+                        )}
+
+                        {/* Special Visa Card Payment Option Button */}
+                        <div className="pt-3 border-t border-dashed border-slate-200 dark:border-slate-800">
+                          <button
+                            type="button"
+                            onClick={() => setIsVisaModalOpen(true)}
+                            className="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-750 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
+                          >
+                            <CreditCard className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                            <span>paiement via carte visa</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
                   ) : cart.length === 0 ? (
                     /* Empty Cart */
                     <div className="text-center py-16 space-y-4">
@@ -2269,7 +2703,8 @@ export default function App() {
                         form="checkout-shipping-form"
                         className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-widest py-3.5 rounded-xl cursor-pointer shadow-sm transition-all text-center flex items-center justify-center gap-2 select-none"
                       >
-                        {t.paySubmit} ({formatPrice(grandTotal, currency)})
+                        Continuer vers le Paiement ({formatPrice(grandTotal, currency)})
+                        <ArrowRight className="w-4 h-4" />
                       </button>
                     )}
                   </div>
@@ -2342,12 +2777,12 @@ export default function App() {
                   {t.myPurchases} ({myOrders.length})
                 </h5>
                 
-                <div className="max-h-52 overflow-y-auto space-y-2.5 pr-1.5 text-left">
-                  {myOrders.map((ord: any) => (
-                    <div key={ord.id} className="bg-slate-50/50 dark:bg-slate-950/40 p-3.5 rounded-2xl border border-[#e6eee3] dark:border-slate-850 text-xs">
+                <div className="max-h-44 overflow-y-auto space-y-2.5 pr-1.5 text-left">
+                  {myOrders.map((ord: any, idx: number) => (
+                    <div key={ord.id || `ord-${idx}`} className="bg-slate-50/50 dark:bg-slate-950/40 p-3.5 rounded-2xl border border-[#e6eee3] dark:border-slate-850 text-xs">
                       <div className="flex justify-between font-mono font-semibold">
                         <span className="text-slate-800 dark:text-slate-200">{t.orderCode} : {ord.id}</span>
-                        <span className="text-[#2d4a22] dark:text-emerald-450 font-black">{formatPrice(ord.total, currency)}</span>
+                        <span className="text-[#2d4a22] dark:text-emerald-450 font-black">{formatOrderTotal(ord.total, currency)}</span>
                       </div>
                       <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400 mt-1 pb-1 border-b border-dashed border-slate-200 dark:border-slate-800">
                         <span>{t.deliveredTo} {ord.city}</span>
@@ -2358,15 +2793,84 @@ export default function App() {
                         {ord.items?.map((it: any, k: number) => (
                           <div key={k} className="flex justify-between text-[10px] text-slate-400 dark:text-slate-400 italic font-medium font-sans">
                             <span>&bull; {it.quantity}x {it.name} ({it.selectedColor?.name || ""})</span>
-                            <span className="font-mono">{formatPrice(it.price, currency)}</span>
+                            <span className="font-mono">{formatOrderTotal(it.price, currency)}</span>
                           </div>
                         ))}
                       </div>
                     </div>
                   ))}
                   {myOrders.length === 0 && (
-                    <div className="text-center py-6 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50/30 dark:bg-slate-950/10">
+                    <div className="text-center py-4 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50/30 dark:bg-slate-950/10">
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 italic font-sans">{t.noOrdersYet}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Custom Bespoke Inquiries list (Configuration Intelligente) */}
+              <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <h5 className="text-[10px] font-mono uppercase tracking-wider text-emerald-800 dark:text-emerald-400 font-extrabold flex items-center gap-1.5">
+                    <Sliders className="w-4 h-4 text-[#2d4a22] dark:text-emerald-450" /> 
+                    Commandes Sur-Mesure ({myBespokeRequests.length})
+                  </h5>
+                  <span className="text-[8px] font-mono bg-[#2d4a22]/10 dark:bg-emerald-950/80 text-[#2d4a22] dark:text-emerald-300 font-bold px-2 py-0.5 rounded-full border border-[#2d4a22]/20">
+                    Simulateur Orris
+                  </span>
+                </div>
+
+                {/* Reassurance & Trust message for custom creations */}
+                <div className="bg-[#2d4a22]/5 dark:bg-[#2d4a22]/15 p-3 rounded-xl border border-[#2d4a22]/20 dark:border-emerald-500/20 text-left space-y-1">
+                  <p className="text-[11px] font-extrabold text-[#2d4a22] dark:text-emerald-400 flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-[#2d4a22] dark:text-emerald-400 flex-shrink-0" />
+                    <span>Engagement & Confiance Atelier</span>
+                  </p>
+                  <p className="text-[10px] text-slate-600 dark:text-slate-300 leading-relaxed font-sans">
+                    Vos demandes personnalisées sont directement prises en charge par nos maîtres d'œuvre. Un devis et une étude de faisabilité vous seront transmis sous 24h.
+                  </p>
+                </div>
+
+                <div className="max-h-48 overflow-y-auto space-y-2 pr-1 text-left">
+                  {myBespokeRequests.map((req: any, idx: number) => (
+                    <div key={req.id || `req-${idx}`} className="bg-slate-50 dark:bg-slate-950/60 p-3 rounded-xl border border-[#e6eee3] dark:border-slate-800 text-xs space-y-1.5">
+                      <div className="flex justify-between items-center font-mono font-bold">
+                        <span className="text-slate-900 dark:text-slate-100">{req.id}</span>
+                        <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 uppercase tracking-wider font-extrabold">
+                          {req.status || "En traitement"}
+                        </span>
+                      </div>
+                      
+                      {/* Essential details only */}
+                      <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-slate-600 dark:text-slate-300 font-sans">
+                        <div><strong className="text-slate-500 dark:text-slate-400">Type :</strong> {req.category || "Meuble sur-mesure"}</div>
+                        <div><strong className="text-slate-500 dark:text-slate-400">Délai :</strong> {req.desiredDelay || "Immédiat"}</div>
+                        {req.estimatedBudget && (
+                          <div className="col-span-2 font-mono text-[#2d4a22] dark:text-emerald-400 font-bold">
+                            Prix désigné : {formatBespokePrice(req.estimatedBudget, currency)}
+                          </div>
+                        )}
+                        {req.city && (
+                          <div className="col-span-2 text-slate-400 dark:text-slate-400 text-[9px]">
+                            Destination : {req.city}, {req.country || ""}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  {myBespokeRequests.length === 0 && (
+                    <div className="text-center py-4 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50/40 dark:bg-slate-950/20 space-y-2">
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 italic">Aucune commande sur-mesure enregistrée pour le moment.</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserDropdownOpen(false);
+                          handleScrollToId("interactive-model-sandbox");
+                        }}
+                        className="text-[10px] text-[#2d4a22] dark:text-emerald-400 font-bold underline hover:no-underline cursor-pointer"
+                      >
+                        Créer une configuration au simulateur &rarr;
+                      </button>
                     </div>
                   )}
                 </div>
@@ -2770,6 +3274,99 @@ export default function App() {
                   {reviewSubmitting ? "Publication..." : "Publier l'avis"}
                 </button>
 
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Visa Card Payment Modal Window */}
+        {isVisaModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsVisaModalOpen(false)}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-xs cursor-pointer"
+            />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[2rem] shadow-2xl p-6 md:p-8 max-w-md w-full z-10 text-left space-y-5 select-text"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/50 text-[#2d4a22] dark:text-emerald-400 rounded-xl">
+                    <CreditCard className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase font-sans">
+                      Paiement par Carte Visa
+                    </h3>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                      Règlement direct via le service WhatsApp
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsVisaModalOpen(false)}
+                  className="p-1 px-2.5 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-750 text-slate-500 dark:text-slate-350 text-sm font-bold rounded-lg cursor-pointer transition-all"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs text-slate-650 dark:text-slate-300 leading-relaxed">
+                <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl space-y-1">
+                  <p className="text-[10px] font-mono font-bold uppercase text-slate-400">Montant de votre panier :</p>
+                  <p className="text-lg font-mono font-black text-[#2d4a22] dark:text-emerald-400">
+                    {formatOrderTotal(grandTotal, currency)}
+                  </p>
+                </div>
+
+                <p>
+                  Pour terminer votre achat par <strong>Carte Visa</strong>, vous allez être directement mis en relation avec le service d'encaissement de l'Atelier sur WhatsApp au numéro :
+                </p>
+
+                <div className="p-3 bg-[#2d4a22]/10 dark:bg-emerald-950/40 border border-[#2d4a22]/20 dark:border-emerald-800/50 rounded-xl font-mono text-center text-sm font-black text-[#2d4a22] dark:text-emerald-300">
+                  {siteConfig?.visaWhatsAppNumber || "0704542909"}
+                </div>
+
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+                  Un conseiller validera l'opération Carte Visa et enregistrera votre commande en temps réel.
+                </p>
+              </div>
+
+              <div className="pt-2 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const phoneNum = siteConfig?.visaWhatsAppNumber || "0704542909";
+                    const cleanPhone = phoneNum.replace(/[^0-9]/g, "");
+                    const targetPhone = cleanPhone.startsWith("225") ? cleanPhone : `225${cleanPhone}`;
+                    const waMsg = encodeURIComponent(`Bonjour Atelier nexus., je souhaite régler ma commande d'un montant de ${formatPrice(grandTotal, currency)} par Carte Visa.`);
+                    window.open(`https://wa.me/${targetPhone}?text=${waMsg}`, "_blank");
+                    
+                    setIsVisaModalOpen(false);
+                    executeFinalOrderSubmission("Carte Visa (WhatsApp)");
+                  }}
+                  className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-wider py-3.5 rounded-xl cursor-pointer shadow-md transition-all text-center flex items-center justify-center gap-2 select-none"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <span>Valider l'action & Payer sur WhatsApp</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsVisaModalOpen(false)}
+                  className="w-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-600 dark:text-slate-300 font-bold text-xs py-2.5 rounded-xl transition-all cursor-pointer"
+                >
+                  Annuler
+                </button>
               </div>
             </motion.div>
           </div>
