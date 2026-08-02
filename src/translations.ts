@@ -659,8 +659,5 @@ export function formatBespokePrice(fcfaAmount: number, currency: Currency): stri
 
 export function formatOrderTotal(amount: number, currency: Currency): string {
   const num = Number(amount) || 0;
-  if (num > 10000) {
-    return formatBespokePrice(num, currency);
-  }
   return formatPrice(num, currency);
 }

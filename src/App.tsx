@@ -53,7 +53,7 @@ import ReviewsCarousel from "./components/ReviewsCarousel";
 import { INITIAL_PRODUCTS, generateAffiliateCode } from "./data";
 import { Product, CartItem, PromoCode } from "./types";
 import { db, auth, googleProvider, signInWithPopup, signOut, handleFirestoreError, GoogleAuthProvider, OperationType } from "./firebase";
-import { collection, query, getDocs, getDoc, doc, setDoc, deleteDoc, serverTimestamp, where, addDoc } from "firebase/firestore";
+import { collection, query, getDocs, getDoc, doc, setDoc, deleteDoc, serverTimestamp, where, addDoc, onSnapshot } from "firebase/firestore";
 import { TRANSLATIONS, Language, Theme, Currency, formatPrice, formatOrderTotal, formatBespokePrice, CURRENCIES } from "./translations";
 import { triggerOrderCelebration } from "./utils/confetti";
 
@@ -256,17 +256,21 @@ export default function App() {
     return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
   };
 
-  // Sync products dynamically from Firestore products collection (Client side query)
+  // Sync products dynamically & in real-time from Firestore products collection
   useEffect(() => {
-    const fetchProducts = async () => {
-      try {
-        setIsDbLoading(true);
-        const q = query(collection(db, "products"));
-        const querySnapshot = await fetchWithTimeout(getDocs(q), 6000);
-        
+    setIsDbLoading(true);
+    const q = query(collection(db, "products"));
+
+    const unsubscribe = onSnapshot(
+      q,
+      (querySnapshot) => {
+        setIsDbLoading(false);
         if (querySnapshot.empty) {
-          // Fallback to sample catalog with affiliate codes
+          // Fallback to sample catalog with affiliate codes and seed to Firestore
           setProducts(INITIAL_PRODUCTS);
+          INITIAL_PRODUCTS.forEach((prod) => {
+            setDoc(doc(db, "products", prod.id), prod).catch(() => {});
+          });
         } else {
           const uniqueMap = new Map<string, Product>();
           querySnapshot.forEach((docSnapshot) => {
@@ -282,14 +286,15 @@ export default function App() {
           });
           setProducts(Array.from(uniqueMap.values()));
         }
-      } catch (err: any) {
-        console.warn("Firestore offline or timeout - loaded products from local fallback:", err);
+      },
+      (err: any) => {
+        console.warn("Firestore offline or listener timeout - loaded products from local fallback:", err);
         setProducts(INITIAL_PRODUCTS);
-      } finally {
         setIsDbLoading(false);
       }
-    };
-    fetchProducts();
+    );
+
+    return () => unsubscribe();
   }, [user]);
 
   // Sync site dynamic configuration from Firestore general or main_config document
@@ -976,8 +981,8 @@ export default function App() {
   // Checkout values calculations
   const subtotal = cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
   const discountAmount = Math.round((subtotal * activeDiscount) / 100);
-  const currentRate = CURRENCIES[currency]?.rate || 1.0;
-  const shippingCharge = subtotal === 0 ? 0 : (2000 / currentRate);
+  const BASE_CFA_RATE = 655.957;
+  const shippingCharge = subtotal === 0 ? 0 : (2000 / BASE_CFA_RATE);
   const grandTotal = Math.max(0, subtotal - discountAmount + shippingCharge);
 
   // Timer effect for 1-minute transfer validation progress
@@ -3845,11 +3850,28 @@ export default function App() {
               </div>
 
               <div className="space-y-3 text-xs text-slate-650 dark:text-slate-300 leading-relaxed">
-                <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl space-y-1">
-                  <p className="text-[10px] font-mono font-bold uppercase text-slate-400">Montant de votre panier :</p>
-                  <p className="text-lg font-mono font-black text-[#2d4a22] dark:text-emerald-400">
-                    {formatOrderTotal(grandTotal, currency)}
-                  </p>
+                <div className="p-4 bg-[#f8faf7] dark:bg-slate-950 border border-[#2d4a22]/20 dark:border-slate-800 rounded-2xl space-y-2 text-left font-sans shadow-xs">
+                  <div className="flex justify-between items-center text-xs text-slate-600 dark:text-slate-300">
+                    <span>Sous-total articles :</span>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-150">{formatPrice(subtotal, currency)}</span>
+                  </div>
+                  {discountAmount > 0 && (
+                    <div className="flex justify-between items-center text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                      <span>Remise promo ({activeDiscount}%) :</span>
+                      <span className="font-mono font-bold">- {formatPrice(discountAmount, currency)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center text-xs text-slate-600 dark:text-slate-300">
+                    <span>Frais de livraison :</span>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-150">{formatPrice(shippingCharge, currency)}</span>
+                  </div>
+                  <div className="h-px bg-slate-200 dark:bg-slate-800 my-1"></div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-black uppercase text-slate-900 dark:text-white">Total à régler (Visa) :</span>
+                    <span className="text-lg font-mono font-black text-[#2d4a22] dark:text-emerald-400">
+                      {formatPrice(grandTotal, currency)}
+                    </span>
+                  </div>
                 </div>
 
                 <p>
