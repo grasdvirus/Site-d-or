@@ -132,6 +132,44 @@ export default function App() {
   const [isContactModalOpen, setIsContactModalOpen] = useState(false);
   const [selectedProductForDetails, setSelectedProductForDetails] = useState<Product | null>(null);
 
+  // Animated Cart Toast & Icon Bump States
+  const [cartToast, setCartToast] = useState<{
+    id: string;
+    productName: string;
+    productImage?: string;
+    price?: number;
+    colorName?: string;
+    quantity: number;
+  } | null>(null);
+  const [cartBump, setCartBump] = useState(false);
+
+  const triggerCartToast = (
+    productName: string,
+    productImage?: string,
+    price?: number,
+    colorName?: string,
+    quantity: number = 1
+  ) => {
+    setCartToast({
+      id: Date.now().toString(),
+      productName,
+      productImage,
+      price,
+      colorName,
+      quantity
+    });
+    setCartBump(true);
+    setTimeout(() => setCartBump(false), 800);
+  };
+
+  useEffect(() => {
+    if (!cartToast) return;
+    const timer = setTimeout(() => {
+      setCartToast(null);
+    }, 3800);
+    return () => clearTimeout(timer);
+  }, [cartToast]);
+
   // Affiliate Code Search & Special Product View states
   const [isCodeSearchModalOpen, setIsCodeSearchModalOpen] = useState(false);
   const [affiliateSearchCode, setAffiliateSearchCode] = useState("");
@@ -795,6 +833,15 @@ export default function App() {
       }]);
     }
 
+    // Trigger toast & cart bump animation
+    triggerCartToast(
+      finalProduct.name,
+      finalProduct.image || color.hex,
+      finalProduct.price,
+      color.name,
+      1
+    );
+
     // Auto-open side drawer to verify the action
     setCartOpen(true);
   };
@@ -825,6 +872,14 @@ export default function App() {
         quantity: spotlightQty
       }]);
     }
+
+    triggerCartToast(
+      spotlightItem.name,
+      spotlightItem.image || selectedColor.hex,
+      spotlightItem.price,
+      selectedColor.name,
+      spotlightQty
+    );
 
     setSpotlightAdded(true);
     setCartOpen(true);
@@ -1199,20 +1254,31 @@ export default function App() {
               </button>
             )}
 
-            {/* Shopping Cart button handle */}
-            <button 
+            {/* Shopping Cart button handle with dynamic bounce animation */}
+            <motion.button 
               onClick={() => setCartOpen(true)}
-              className="relative p-2.5 bg-[#f4f8f3] dark:bg-slate-800 border border-[#e2eae0] dark:border-slate-700 rounded-xl hover:bg-[#eef5eb] dark:hover:bg-slate-750 cursor-pointer text-slate-800 dark:text-slate-100 transition-all flex items-center gap-1.5 shadow-2xs select-none"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.93 }}
+              animate={cartBump ? { scale: [1, 1.25, 0.92, 1.12, 1], rotate: [0, -8, 8, -4, 0] } : { scale: 1, rotate: 0 }}
+              transition={{ duration: 0.5, ease: "easeInOut" }}
+              className={`relative p-2.5 bg-[#f4f8f3] dark:bg-slate-800 border border-[#e2eae0] dark:border-slate-700 rounded-xl hover:bg-[#eef5eb] dark:hover:bg-slate-750 cursor-pointer text-slate-800 dark:text-slate-100 transition-colors flex items-center gap-1.5 shadow-2xs select-none ${
+                cartBump ? "ring-2 ring-emerald-500/50 bg-emerald-50 dark:bg-slate-750" : ""
+              }`}
               id="cart-hand-btn"
             >
-              <ShoppingBag className="w-4 h-4 text-[#2d4a22]" />
+              <ShoppingBag className={`w-4 h-4 text-[#2d4a22] transition-transform ${cartBump ? "scale-110" : ""}`} />
               <span className="text-[10px] font-extrabold uppercase tracking-wider hidden sm:inline text-slate-705 dark:text-slate-200">{t.cart}</span>
               {cart.length > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 bg-[#2d4a22] text-white font-mono text-[10px] font-bold rounded-full items-center justify-center shadow-md border-2 border-white">
+                <motion.span
+                  key={cart.reduce((sum, item) => sum + item.quantity, 0)}
+                  initial={{ scale: 0.6 }}
+                  animate={{ scale: 1 }}
+                  className="absolute -top-1.5 -right-1.5 flex h-5 w-5 bg-[#2d4a22] text-white font-mono text-[10px] font-bold rounded-full items-center justify-center shadow-md border-2 border-white"
+                >
                   {cart.reduce((sum, item) => sum + item.quantity, 0)}
-                </span>
+                </motion.span>
               )}
-            </button>
+            </motion.button>
 
             {/* Admin toggle padlock button - visible only to the administrator when logged in */}
             {user && user.email === "grasdvirus@gmail.com" && (
@@ -2346,18 +2412,42 @@ export default function App() {
                         </span>
                       </div>
 
-                      <button
+                      <motion.button
                         type="button"
                         onClick={handleSpotlightAddToCart}
-                        className={`flex-1 py-3 px-6 rounded-xl text-xs uppercase tracking-widest font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                        whileHover={{ scale: 1.04 }}
+                        whileTap={{ scale: 0.92 }}
+                        className={`flex-1 py-3 px-6 rounded-xl text-xs uppercase tracking-widest font-black transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
                           spotlightAdded
-                            ? "bg-emerald-600 text-white animate-scaleUp"
+                            ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 ring-2 ring-emerald-400/40"
                             : "bg-[#2d4a22] hover:bg-[#1a2d15] text-white shadow-sm"
                         }`}
                       >
-                        <ShoppingBag className="w-3.5 h-3.5" />
-                        {spotlightAdded ? t.addedTitle : lang === 'en' ? "Instant Buy" : lang === 'es' ? "Comprar Ahora" : lang === 'ar' ? "شراء فوري" : "Acheter"}
-                      </button>
+                        <AnimatePresence mode="wait">
+                          {spotlightAdded ? (
+                            <motion.span
+                              key="spot-check"
+                              initial={{ scale: 0, rotate: -45 }}
+                              animate={{ scale: 1, rotate: 0 }}
+                              exit={{ scale: 0 }}
+                              className="flex items-center gap-1.5"
+                            >
+                              <Check className="w-4 h-4 font-extrabold stroke-[3]" />
+                              <span>{t.addedTitle || "Ajouté !"}</span>
+                            </motion.span>
+                          ) : (
+                            <motion.span
+                              key="spot-bag"
+                              initial={{ scale: 0.9 }}
+                              animate={{ scale: 1 }}
+                              className="flex items-center gap-1.5"
+                            >
+                              <ShoppingBag className="w-3.5 h-3.5" />
+                              <span>{lang === 'en' ? "Instant Buy" : lang === 'es' ? "Comprar Ahora" : lang === 'ar' ? "شراء فوري" : "Acheter"}</span>
+                            </motion.span>
+                          )}
+                        </AnimatePresence>
+                      </motion.button>
                     </div>
 
                   </div>
@@ -3491,6 +3581,7 @@ export default function App() {
             </motion.div>
           </div>
         )}
+      </AnimatePresence>
 
         {/* GOOGLE AUTHENTICATION ERROR & VERCEL ACCESS RECOVERY MODAL */}
         {googleAuthError && (
@@ -4022,15 +4113,17 @@ export default function App() {
                   </div>
 
                   <div className="pt-4 space-y-3">
-                    <button
+                    <motion.button
                       type="button"
                       disabled={selectedAffiliateProduct.stock === 0}
                       onClick={() => handleAddToCartFromAffiliateView(selectedAffiliateProduct)}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.96 }}
                       className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs md:text-sm uppercase tracking-widest py-4.5 rounded-2xl cursor-pointer shadow-lg hover:shadow-xl transition-all text-center flex items-center justify-center gap-3"
                     >
                       <ShoppingBag className="w-5 h-5" />
                       <span>Ajouter au panier ({formatPrice(selectedAffiliateProduct.price * affiliateProductQty, currency)})</span>
-                    </button>
+                    </motion.button>
                   </div>
 
                 </div>
@@ -4050,7 +4143,87 @@ export default function App() {
             <ArrowUp className="w-5 h-5" />
           </button>
         )}
-      </AnimatePresence>
+
+        {/* ANIMATED CART TOAST POPUP NOTIFICATION BAR */}
+        <AnimatePresence>
+          {cartToast && (
+            <motion.div
+              key={cartToast.id}
+              initial={{ opacity: 0, y: 60, scale: 0.88 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 40, scale: 0.9 }}
+              transition={{ type: "spring", stiffness: 450, damping: 30 }}
+              className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[250] max-w-md w-[92%] sm:w-auto bg-slate-900/95 dark:bg-slate-900/95 backdrop-blur-md text-white p-3.5 px-5 rounded-2xl border border-slate-700/80 shadow-2xl flex items-center justify-between gap-4 font-sans select-none overflow-hidden"
+            >
+              <div className="flex items-center gap-3">
+                {/* Visual Icon / Thumbnail with Badge */}
+                <div className="relative flex-shrink-0">
+                  {cartToast.productImage && cartToast.productImage.length > 7 ? (
+                    <img 
+                      src={cartToast.productImage} 
+                      alt={cartToast.productName} 
+                      className="w-10 h-10 object-cover rounded-xl border border-slate-700 bg-slate-800"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 bg-emerald-500/20 text-emerald-400 rounded-xl flex items-center justify-center border border-emerald-500/30">
+                      <ShoppingBag className="w-5 h-5" />
+                    </div>
+                  )}
+                  <span className="absolute -top-1 -right-1 flex h-4 w-4 bg-emerald-500 rounded-full items-center justify-center text-[9px] font-bold text-slate-950 shadow-sm">
+                    ✓
+                  </span>
+                </div>
+
+                <div className="text-left">
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-xs font-bold text-white tracking-tight">
+                      {lang === 'en' ? "Added to Cart!" : lang === 'es' ? "¡Añadido al Carrito!" : lang === 'ar' ? "تمت الإضافة إلى السلة!" : "Ajouté au panier !"}
+                    </p>
+                    {cartToast.quantity > 1 && (
+                      <span className="text-[10px] font-mono bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded font-bold">
+                        x{cartToast.quantity}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-300 truncate max-w-[170px] sm:max-w-[210px]">
+                    {cartToast.productName} {cartToast.colorName ? `• ${cartToast.colorName}` : ''}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCartToast(null);
+                    setCartOpen(true);
+                  }}
+                  className="bg-[#2d4a22] hover:bg-[#1f3517] text-white text-[11px] font-extrabold uppercase tracking-wider px-3.5 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-sm hover:scale-105 active:scale-95"
+                >
+                  <ShoppingBag className="w-3.5 h-3.5" />
+                  <span>{lang === 'en' ? "View" : lang === 'es' ? "Ver" : lang === 'ar' ? "عرض" : "Voir"}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCartToast(null)}
+                  className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+                  title="Fermer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Animated linear progress countdown bar */}
+              <motion.div
+                initial={{ width: "100%" }}
+                animate={{ width: "0%" }}
+                transition={{ duration: 3.8, ease: "linear" }}
+                className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-400 via-emerald-600 to-[#2d4a22] opacity-80"
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
     </div>
   );

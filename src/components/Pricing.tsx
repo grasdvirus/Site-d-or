@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { Check, ShoppingBag, Heart, Search, Star, Archive } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
 import { Product } from "../types";
 import { TRANSLATIONS, Language, Currency, formatPrice } from "../translations";
 
@@ -313,25 +314,59 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                   </span>
                 </div>
 
-                <button
+                <motion.button
                   type="button"
                   disabled={product.stock === 0}
                   onClick={() => handleAddToCart(product)}
-                  className={`p-3 rounded-full transition-all duration-200 cursor-pointer flex items-center justify-center ${
+                  whileHover={{ scale: 1.12 }}
+                  whileTap={{ scale: 0.88 }}
+                  className={`relative p-3 rounded-full transition-colors duration-200 cursor-pointer flex items-center justify-center ${
                     product.stock === 0
                       ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed"
                       : isAdded
-                      ? "bg-emerald-600 text-white animate-scaleUp"
-                      : "bg-[#2d4a22] text-white hover:bg-[#1a2d15] hover:scale-105 shadow-sm"
+                      ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 ring-2 ring-emerald-400/40"
+                      : "bg-[#2d4a22] text-white hover:bg-[#1a2d15] shadow-sm hover:shadow-md"
                   }`}
                   title={product.stock === 0 ? "Épuisé" : t.addToCart}
                 >
-                  {isAdded ? (
-                    <Check className="w-3.5 h-3.5 font-bold" />
-                  ) : (
-                    <ShoppingBag className="w-3.5 h-3.5" />
-                  )}
-                </button>
+                  <AnimatePresence mode="wait">
+                    {isAdded ? (
+                      <motion.span
+                        key="check-icon"
+                        initial={{ scale: 0, rotate: -45 }}
+                        animate={{ scale: 1, rotate: 0 }}
+                        exit={{ scale: 0, rotate: 45 }}
+                        transition={{ type: "spring", stiffness: 500, damping: 25 }}
+                      >
+                        <Check className="w-4 h-4 font-extrabold stroke-[3]" />
+                      </motion.span>
+                    ) : (
+                      <motion.span
+                        key="bag-icon"
+                        initial={{ scale: 0.8 }}
+                        animate={{ scale: 1 }}
+                        exit={{ scale: 0.8 }}
+                      >
+                        <ShoppingBag className="w-3.5 h-3.5" />
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Floating +1 particle badge */}
+                  <AnimatePresence>
+                    {isAdded && (
+                      <motion.span
+                        initial={{ opacity: 1, y: 0, scale: 0.8 }}
+                        animate={{ opacity: 0, y: -26, scale: 1.3 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.75, ease: "easeOut" }}
+                        className="absolute -top-3 font-mono text-[10px] font-black text-emerald-600 dark:text-emerald-400 bg-white dark:bg-slate-900 border border-emerald-500/40 px-1.5 py-0.5 rounded-full shadow-md pointer-events-none select-none z-10"
+                      >
+                        +1
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </motion.button>
               </div>
 
             </div>
