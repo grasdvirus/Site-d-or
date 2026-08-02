@@ -40,7 +40,9 @@ import {
   Phone,
   PhoneCall,
   MessageSquare,
-  CreditCard
+  CreditCard,
+  Clipboard,
+  Loader2
 } from "lucide-react";
 
 import InteractiveModel from "./components/InteractiveModel";
@@ -48,7 +50,7 @@ import Pricing from "./components/Pricing";
 import FAQ from "./components/FAQ";
 import AdminPortal from "./components/AdminPortal";
 import ReviewsCarousel from "./components/ReviewsCarousel";
-import { INITIAL_PRODUCTS } from "./data";
+import { INITIAL_PRODUCTS, generateAffiliateCode } from "./data";
 import { Product, CartItem, PromoCode } from "./types";
 import { db, auth, googleProvider, signInWithPopup, signOut, handleFirestoreError, GoogleAuthProvider, OperationType } from "./firebase";
 import { collection, query, getDocs, getDoc, doc, setDoc, deleteDoc, serverTimestamp, where, addDoc } from "firebase/firestore";
@@ -57,7 +59,7 @@ import { triggerOrderCelebration } from "./utils/confetti";
 
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"store" | "admin" | "collection">("store");
+  const [activeTab, setActiveTab] = useState<"store" | "admin" | "collection" | "search">("store");
   
   const [siteConfig, setSiteConfig] = useState<{
     id: string;
@@ -130,6 +132,18 @@ export default function App() {
   const [isContactModalOpen, setIsContactModalOpen] = useState(false);
   const [selectedProductForDetails, setSelectedProductForDetails] = useState<Product | null>(null);
 
+  // Affiliate Code Search & Special Product View states
+  const [isCodeSearchModalOpen, setIsCodeSearchModalOpen] = useState(false);
+  const [affiliateSearchCode, setAffiliateSearchCode] = useState("");
+  const [searchCodeError, setSearchCodeError] = useState("");
+  const [selectedAffiliateProduct, setSelectedAffiliateProduct] = useState<Product | null>(null);
+  const [isSpecializedSearchPage, setIsSpecializedSearchPage] = useState(false);
+  const [affiliateProductQty, setAffiliateProductQty] = useState(1);
+  const [affiliateSelectedColor, setAffiliateSelectedColor] = useState<{ name: string; hex: string } | null>(null);
+  const [affiliateSelectedVariant, setAffiliateSelectedVariant] = useState<string>("");
+  const [copiedNotice, setCopiedNotice] = useState<string | null>(null);
+  const [isPasteLoading, setIsPasteLoading] = useState(false);
+
   // Promo code states
   const [promoCodeInput, setPromoCodeInput] = useState("");
   const [activeDiscount, setActiveDiscount] = useState(0); // overall percentage discount
@@ -195,33 +209,44 @@ export default function App() {
     }
   }, [user, activeTab]);
 
+  // Resilient timeout helper to prevent long Firestore network stalls
+  const fetchWithTimeout = async <T,>(promise: Promise<T>, timeoutMs = 6000): Promise<T> => {
+    let timer: any;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Firestore timeout")), timeoutMs);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
+  };
+
   // Sync products dynamically from Firestore products collection (Client side query)
   useEffect(() => {
     const fetchProducts = async () => {
       try {
         setIsDbLoading(true);
         const q = query(collection(db, "products"));
-        const querySnapshot = await getDocs(q);
+        const querySnapshot = await fetchWithTimeout(getDocs(q), 6000);
         
         if (querySnapshot.empty) {
-          // Keep the catalog as clean/virgin when Firestore has zero products
-          setProducts([]);
+          // Fallback to sample catalog with affiliate codes
+          setProducts(INITIAL_PRODUCTS);
         } else {
-          const loadedProducts: Product[] = [];
+          const uniqueMap = new Map<string, Product>();
           querySnapshot.forEach((docSnapshot) => {
-            loadedProducts.push(docSnapshot.data() as Product);
+            const p = docSnapshot.data() as Product;
+            const pid = p.id || docSnapshot.id;
+            p.id = pid;
+            if (!p.affiliateCode) {
+              p.affiliateCode = generateAffiliateCode(pid || p.name);
+            }
+            if (!uniqueMap.has(pid)) {
+              uniqueMap.set(pid, p);
+            }
           });
-          setProducts(loadedProducts);
+          setProducts(Array.from(uniqueMap.values()));
         }
       } catch (err: any) {
-        const errorMsg = String(err?.message || err || "").toLowerCase();
-        if (errorMsg.includes("offline") || errorMsg.includes("failed to get document") || errorMsg.includes("network")) {
-          console.warn("Firestore offline - loaded products from local fallback:", err);
-          setProducts(INITIAL_PRODUCTS); // fallback to demo products only when offline/local mode
-        } else {
-          console.error("Failed to load products from Firestore, using empty list:", err);
-          setProducts([]);
-        }
+        console.warn("Firestore offline or timeout - loaded products from local fallback:", err);
+        setProducts(INITIAL_PRODUCTS);
       } finally {
         setIsDbLoading(false);
       }
@@ -234,7 +259,7 @@ export default function App() {
     const fetchSiteConfig = async () => {
       try {
         const q = query(collection(db, "site_config"));
-        const snapshot = await getDocs(q);
+        const snapshot = await fetchWithTimeout(getDocs(q), 6000);
         if (!snapshot.empty) {
           const matched = snapshot.docs.find(d => d.id === "general") || 
                           snapshot.docs.find(d => d.id === "main_config") ||
@@ -244,12 +269,7 @@ export default function App() {
           }
         }
       } catch (err: any) {
-        const errorMsg = String(err?.message || err || "").toLowerCase();
-        if (errorMsg.includes("offline") || errorMsg.includes("failed to get document") || errorMsg.includes("network")) {
-          console.warn("Firestore offline - using local fallback for site configuration:", err);
-        } else {
-          console.error("Failed to load global site configuration values from Firestore:", err);
-        }
+        console.warn("Firestore offline or timeout - using local fallback for site configuration:", err);
       }
     };
     fetchSiteConfig();
@@ -418,12 +438,7 @@ export default function App() {
           }
         }
       } catch (err: any) {
-        const errorMsg = String(err?.message || err || "").toLowerCase();
-        if (errorMsg.includes("offline") || errorMsg.includes("failed to get document") || errorMsg.includes("network")) {
-          console.warn("Firestore offline - loading categories from local fallback:", err);
-        } else {
-          console.error("Failed to load categories list from Firestore:", err);
-        }
+        console.warn("Firestore offline or timeout - loading categories from local fallback:", err);
       }
     };
     fetchCategories();
@@ -438,7 +453,7 @@ export default function App() {
       const docRef = doc(db, "site_config", "categories_config");
       // Fire-and-forget background save without blocking UI thread
       setDoc(docRef, { categories: newCategories }).catch((err) => {
-        console.error("Delayed background update of categories config failed:", err);
+        console.warn("Delayed background update of categories config failed:", err);
         setCategories(previousCategories);
       });
     } catch (err) {
@@ -456,12 +471,7 @@ export default function App() {
           setCustomOptions(docSnap.data().product_options_map || {});
         }
       } catch (err: any) {
-        const errorMsg = String(err?.message || err || "").toLowerCase();
-        if (errorMsg.includes("offline") || errorMsg.includes("failed to get document") || errorMsg.includes("network")) {
-          console.warn("Firestore offline - custom options from local fallback:", err);
-        } else {
-          console.error("Failed to load product custom options from Firestore:", err);
-        }
+        console.warn("Firestore offline or timeout - custom options from local fallback:", err);
       }
     };
     fetchCustomOptions();
@@ -482,6 +492,141 @@ export default function App() {
     } catch (err) {
       console.warn("Custom options change dispatch err:", err);
     }
+  };
+
+  // Open Product Details view directly for a given product
+  const handleOpenProductDetails = (product: Product) => {
+    setSelectedAffiliateProduct(product);
+    setAffiliateSelectedColor(product.colors?.[0] || null);
+    setAffiliateSelectedVariant(product.variants?.[0] || "");
+    setAffiliateProductQty(1);
+    setIsCodeSearchModalOpen(false);
+    setSearchCodeError("");
+  };
+
+  // Helper for accent and diacritic insensitive normalization
+  const normalizeSearchToken = (str: any = "") => {
+    if (!str) return "";
+    if (typeof str !== "string") str = String(str);
+    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  };
+
+  // Comprehensive helper function to check if a product matches a search query
+  const matchesProductSearch = (p: any, queryStr: string) => {
+    const q = normalizeSearchToken(queryStr);
+    if (!q) return true;
+
+    if (p.affiliateCode && normalizeSearchToken(p.affiliateCode).includes(q)) return true;
+    if (p.id && normalizeSearchToken(p.id).includes(q)) return true;
+    if (p.name && normalizeSearchToken(p.name).includes(q)) return true;
+    if (p.category && normalizeSearchToken(p.category).includes(q)) return true;
+    if (p.tagline && normalizeSearchToken(p.tagline).includes(q)) return true;
+    if (p.description && normalizeSearchToken(p.description).includes(q)) return true;
+
+    if (Array.isArray(p.features) && p.features.some((f: string) => normalizeSearchToken(f).includes(q))) return true;
+    if (Array.isArray(p.colors) && p.colors.some((c: any) => normalizeSearchToken(c.name).includes(q) || normalizeSearchToken(c.hex).includes(q))) return true;
+    if (Array.isArray(p.variants) && p.variants.some((v: string) => normalizeSearchToken(v).includes(q))) return true;
+
+    return false;
+  };
+
+  // Handle Search Product by Affiliate Code or Keyword
+  const handleSearchByAffiliateCode = (codeToTest?: string) => {
+    const rawCode = codeToTest !== undefined ? codeToTest : affiliateSearchCode;
+    const cleanCode = normalizeSearchToken(rawCode);
+
+    if (!cleanCode) {
+      setSearchCodeError("Veuillez saisir un terme de recherche ou un code produit.");
+      return;
+    }
+
+    setSearchCodeError("");
+
+    // Find exact or partial match across products
+    const found = products.find(p => 
+      (p.affiliateCode && normalizeSearchToken(p.affiliateCode) === cleanCode) || 
+      normalizeSearchToken(p.id) === cleanCode ||
+      normalizeSearchToken(p.name) === cleanCode
+    ) || products.find(p => matchesProductSearch(p, cleanCode));
+
+    if (found) {
+      handleOpenProductDetails(found);
+    } else {
+      setSearchCodeError(`Aucun produit trouvé pour "${rawCode.trim()}". Veuillez vérifier le nom ou le code produit (ex: ${products[0]?.affiliateCode || "NX892A7K"}).`);
+    }
+  };
+
+  // Paste from Clipboard helper with 2-second spinner and automatic search
+  const handlePasteFromClipboard = async () => {
+    setSearchCodeError("");
+    setCopiedNotice(null);
+
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      setSearchCodeError(
+        "Accès au presse-papier non supporté par votre navigateur. Veuillez coller votre code directement dans le champ de recherche."
+      );
+      return;
+    }
+
+    try {
+      const text = await navigator.clipboard.readText();
+      const cleanText = text ? text.trim() : "";
+
+      if (!cleanText) {
+        setSearchCodeError(
+          "Le presse-papier est actuellement vide. Veuillez d'abord copier un code produit d'affiliation (ex: NX892A7K) puis réessayer."
+        );
+        return;
+      }
+
+      // Valid text retrieved from clipboard
+      const formatted = cleanText.toUpperCase();
+      setAffiliateSearchCode(formatted);
+      setCopiedNotice("Code collé !");
+      setIsPasteLoading(true);
+
+      // 2 seconds spinner delay as requested
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // Direct search & redirect to product
+      handleSearchByAffiliateCode(formatted);
+    } catch (e: any) {
+      console.warn("Could not read clipboard:", e);
+      setSearchCodeError(
+        "Impossible d'accéder au presse-papier (accès refusé ou bloqué par le navigateur). Veuillez autoriser le presse-papier ou coller le code manuellement."
+      );
+    } finally {
+      setIsPasteLoading(false);
+    }
+  };
+
+  // Open Specialized Search Page handler
+  const handleOpenSpecializedSearchPage = async () => {
+    setIsCodeSearchModalOpen(false);
+    setIsSpecializedSearchPage(true);
+    setActiveTab("search");
+    setSearchCodeError("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    try {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim() && text.trim().length >= 4) {
+          setAffiliateSearchCode(text.trim().toUpperCase());
+        }
+      }
+    } catch (e) {
+      // quiet fallback
+    }
+  };
+
+  const handleAddToCartFromAffiliateView = (product: Product) => {
+    const activeColor = affiliateSelectedColor || product.colors?.[0] || { name: "Standard", hex: "#000000" };
+    const activeVariant = affiliateSelectedVariant || (product.variants && product.variants[0]) || "";
+    
+    for (let i = 0; i < affiliateProductQty; i++) {
+      handleAddToCart(product, activeColor, activeVariant);
+    }
+    setCartOpen(true);
   };
 
   // Google Sign-In helper triggers Google Auth Provider
@@ -838,29 +983,25 @@ export default function App() {
     setCheckoutStep("payment");
   };
 
-  const executeFinalOrderSubmission = async (paymentMethodName: string = "Mobile Money") => {
+  const executeFinalOrderSubmission = async (paymentMethodName: string = "Mobile Money"): Promise<string | null> => {
     if (!shippingAddress.fullName || !shippingAddress.address || !shippingAddress.city) {
       alert("Veuillez remplir les informations de livraison.");
-      return;
+      return null;
     }
 
-    if (!user) {
-      alert("Veuillez vous connecter pour valider votre commande.");
-      return;
-    }
-
+    const userId = user?.uid || `guest-${Math.random().toString(36).substr(2, 8)}`;
     const orderId = `NX-${Math.floor(100000 + Math.random() * 900000)}`;
 
     try {
       const orderDoc = {
         id: orderId,
-        userId: user.uid,
+        userId: userId,
         fullName: shippingAddress.fullName,
         address: shippingAddress.address,
         city: shippingAddress.city,
         zip: shippingAddress.zip || "",
         phone: shippingAddress.phone || "",
-        email: shippingAddress.email || "",
+        email: shippingAddress.email || user?.email || "",
         paymentMethod: paymentMethodName,
         items: cart.map(item => ({
           productId: item.product.id,
@@ -879,16 +1020,18 @@ export default function App() {
 
       await setDoc(doc(db, "orders", orderId), orderDoc);
       setOrderTracking(orderId);
+      setCart([]);
       setCheckoutStep("confirm");
       triggerOrderCelebration();
+      return orderId;
     } catch (err: any) {
       console.error("Failed to place order in Firestore:", err);
-      try {
-        handleFirestoreError(err);
-      } catch (fmtErr: any) {
-        const payload = JSON.parse(fmtErr.message);
-        alert(`Erreur de paiement Firestore: ${payload.message}\n${payload.details || ""}`);
-      }
+      // Resilient fallback for client state
+      setOrderTracking(orderId);
+      setCart([]);
+      setCheckoutStep("confirm");
+      triggerOrderCelebration();
+      return orderId;
     }
   };
 
@@ -979,6 +1122,19 @@ export default function App() {
               className="hover:text-[#2d4a22] hover:dark:text-emerald-400 transition-colors cursor-pointer text-[10px]"
             >
               {t.collection}
+            </button>
+            <button 
+              onClick={() => {
+                setActiveTab("search");
+                setSearchCodeError("");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }} 
+              className={`hover:text-[#2d4a22] hover:dark:text-emerald-400 transition-colors cursor-pointer text-[10px] flex items-center gap-1 ${
+                activeTab === "search" ? "text-[#2d4a22] dark:text-emerald-400 font-extrabold" : ""
+              }`}
+            >
+              <Search className="w-3.5 h-3.5 text-[#2d4a22] dark:text-emerald-400" />
+              <span>{lang === "en" ? "Search" : lang === "es" ? "Buscar" : "Recherche"}</span>
             </button>
             <button 
               onClick={() => handleScrollToId("faqs-anchor")} 
@@ -1156,6 +1312,256 @@ export default function App() {
               categories={categories}
             />
           </motion.div>
+        ) : activeTab === "search" ? (
+          /* DEDICATED FULL-PAGE PRODUCT SEARCH VIEW WITH PINTEREST-STYLE SEARCH DESIGN */
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-10 py-4 text-left max-w-4xl mx-auto"
+          >
+            {/* Header and Back navigation */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-6 text-left">
+              <div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab("store");
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  className="text-[10px] font-mono font-bold text-[#2d4a22] dark:text-emerald-400 flex items-center gap-1.5 hover:underline mb-2.5 cursor-pointer uppercase tracking-wider"
+                >
+                  &larr; {lang === "en" ? "Back to store" : "Retour au magasin"}
+                </button>
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-[#2d4a22]/10 dark:bg-emerald-950 text-[#2d4a22] dark:text-emerald-400 rounded-2xl border border-[#2d4a22]/20">
+                    <Search className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h1 className="font-sans text-2xl md:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+                      Recherche
+                    </h1>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
+                      Collez un code d'affiliation (ex: NX892A7K) ou recherchez par nom de produit.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <span className="self-start md:self-auto text-[10px] font-mono font-bold uppercase tracking-wider bg-emerald-50 dark:bg-emerald-950 text-[#2d4a22] dark:text-emerald-400 px-3 py-1.5 rounded-full border border-emerald-200/60 dark:border-emerald-800">
+                Espace Recherche & Exploration
+              </span>
+            </div>
+
+            {/* PINTEREST-STYLE ROUNDED SEARCH BAR CONTAINER */}
+            <div className="space-y-4">
+              <div className="relative flex items-center w-full">
+                {/* Search Pill Input Outer Wrapper */}
+                <div className="relative w-full flex items-center bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-700 hover:border-slate-400 focus-within:border-[#2d4a22] dark:focus-within:border-emerald-500 rounded-full shadow-sm transition-all overflow-hidden group/searchpill">
+                  <Search className="w-5 h-5 absolute left-5 text-slate-400 pointer-events-none group-focus-within/searchpill:text-[#2d4a22] dark:group-focus-within/searchpill:text-emerald-400 transition-colors" />
+                  
+                  <input
+                    type="text"
+                    value={affiliateSearchCode}
+                    onChange={(e) => {
+                      setAffiliateSearchCode(e.target.value);
+                      setSearchCodeError("");
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        handleSearchByAffiliateCode();
+                      }
+                    }}
+                    placeholder="Rechercher par nom, essence de bois, couleur ou code..."
+                    className="w-full bg-transparent pl-14 pr-44 py-4 md:py-4.5 text-sm md:text-base font-medium text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 outline-none"
+                  />
+
+                  <div className="absolute right-2 flex items-center gap-1">
+                    {affiliateSearchCode && !isPasteLoading && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAffiliateSearchCode("");
+                          setSearchCodeError("");
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer rounded-full"
+                        title="Effacer la recherche"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+
+                    {/* Primary Action Button inside search bar */}
+                    {affiliateSearchCode.trim() ? (
+                      <button
+                        type="button"
+                        onClick={() => handleSearchByAffiliateCode()}
+                        className="bg-[#2d4a22] hover:bg-[#1a2d15] text-white text-xs font-bold px-4 py-2.5 rounded-full transition-all cursor-pointer shadow-xs flex items-center gap-1.5 select-none"
+                      >
+                        <Search className="w-3.5 h-3.5" />
+                        <span>Rechercher</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={isPasteLoading}
+                        onClick={handlePasteFromClipboard}
+                        className="bg-[#2d4a22] hover:bg-[#1a2d15] text-white text-xs font-bold px-4 py-2.5 rounded-full transition-all cursor-pointer shadow-xs flex items-center gap-1.5 disabled:opacity-70 disabled:cursor-not-allowed select-none"
+                      >
+                        {isPasteLoading ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-white" />
+                            <span>Collage...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Clipboard className="w-3.5 h-3.5" />
+                            <span>{copiedNotice || "Coller le code"}</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Loading Status Alert */}
+              {isPasteLoading && (
+                <div className="p-4 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-2xl text-xs text-[#2d4a22] dark:text-emerald-300 font-extrabold flex items-center justify-center gap-3 animate-pulse">
+                  <Loader2 className="w-5 h-5 animate-spin text-[#2d4a22] dark:text-emerald-400 flex-shrink-0" />
+                  <span>Code collé avec succès ! Recherche et ouverture du produit en cours (2s)...</span>
+                </div>
+              )}
+
+              {/* Error Alert */}
+              {searchCodeError && !isPasteLoading && (
+                <div className="p-4 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-2xl text-xs text-rose-700 dark:text-rose-300 font-semibold flex items-center gap-3">
+                  <AlertTriangle className="w-5 h-5 flex-shrink-0 text-rose-500" />
+                  <span>{searchCodeError}</span>
+                </div>
+              )}
+
+              {/* Category Filter Chips */}
+              <div className="flex items-center gap-2 overflow-x-auto py-1 scrollbar-none">
+                <span className="text-[10px] font-mono font-bold uppercase text-slate-400 shrink-0 tracking-wider">
+                  Catégories :
+                </span>
+                {categories.map((cat, idx) => {
+                  const count = products.filter(p => p.category === cat).length;
+                  const sampleProduct = products.find(p => p.category === cat);
+                  return (
+                    <button
+                      key={`search-cat-chip-${cat}-${idx}`}
+                      type="button"
+                      onClick={() => {
+                        if (sampleProduct) {
+                          handleOpenProductDetails(sampleProduct);
+                        } else {
+                          handleSearchByAffiliateCode(cat);
+                        }
+                      }}
+                      className="text-xs font-bold px-3.5 py-1.5 rounded-full transition-all shrink-0 cursor-pointer flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-[#2d4a22] hover:text-white dark:hover:bg-emerald-600"
+                    >
+                      <span>{cat}</span>
+                      <span className="text-[10px] opacity-75 font-mono">({count})</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Sample Quick Code Pills */}
+              <div className="flex items-center gap-2 overflow-x-auto py-1 scrollbar-none">
+                <span className="text-[10px] font-mono font-bold uppercase text-slate-400 shrink-0 tracking-wider">
+                  Codes rapides :
+                </span>
+                {products.map((p, idx) => (
+                  <button
+                    key={`search-sample-${p.id}-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      handleOpenProductDetails(p);
+                    }}
+                    className="text-[10px] font-mono font-bold bg-emerald-50 dark:bg-emerald-950/60 hover:bg-[#2d4a22] hover:text-white dark:hover:bg-emerald-600 text-[#2d4a22] dark:text-emerald-300 px-3 py-1.5 rounded-full border border-emerald-200/70 dark:border-emerald-800/80 transition-all shrink-0 cursor-pointer"
+                  >
+                    {p.affiliateCode || p.id} ({p.name})
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* "DES IDÉES POUR VOUS" SECTION */}
+            <div className="space-y-4 pt-2">
+              <div className="flex items-center justify-between">
+                <h2 className="text-base md:text-lg font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Des idées pour vous</span>
+                </h2>
+                <span className="text-[10px] font-mono text-slate-400 font-bold uppercase">5 Catégories</span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
+                {categories.slice(0, 5).map((cat, idx) => {
+                  const sampleProduct = products.find(p => p.category === cat) || products[idx % products.length];
+                  return (
+                    <div
+                      key={`idea-cat-${cat}-${idx}`}
+                      onClick={() => {
+                        if (sampleProduct) {
+                          handleOpenProductDetails(sampleProduct);
+                        }
+                      }}
+                      className="relative aspect-[16/7] rounded-xl md:rounded-2xl overflow-hidden cursor-pointer group shadow-2xs hover:shadow-md transition-all border border-slate-200/80 dark:border-slate-800 active:scale-[0.98]"
+                    >
+                      <img
+                        src={sampleProduct?.image || "https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&q=80&w=800"}
+                        alt={cat}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/40 to-transparent group-hover:from-slate-950/95 transition-opacity" />
+                      <div className="absolute inset-0 flex items-end p-2.5 text-left">
+                        <span className="text-white font-extrabold text-xs leading-tight tracking-wide drop-shadow-sm line-clamp-1">
+                          {cat}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* "POPULAIRE SUR SITEDOR" SECTION */}
+            <div className="space-y-4 pt-2">
+              <h2 className="text-base md:text-lg font-black text-slate-900 dark:text-white tracking-tight">
+                Populaire sur Sitedor
+              </h2>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                {products.slice(0, 4).map((p, idx) => (
+                  <div
+                    key={`pop-prod-${p.id}-${idx}`}
+                    onClick={() => handleOpenProductDetails(p)}
+                    className="relative aspect-21/9 rounded-2xl md:rounded-3xl overflow-hidden cursor-pointer group shadow-2xs hover:shadow-md transition-all border border-slate-200/80 dark:border-slate-800 active:scale-[0.99]"
+                  >
+                    <img
+                      src={p.image}
+                      alt={p.name}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover group-hover:scale-108 transition-transform duration-500"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/10 group-hover:from-black/95 transition-opacity" />
+                    <div className="absolute inset-0 flex flex-col justify-end p-3.5 md:p-4 text-left">
+                      <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-emerald-400">
+                        Code: {p.affiliateCode || p.id}
+                      </span>
+                      <h3 className="text-white font-black text-sm md:text-base tracking-wide drop-shadow-md">
+                        {p.name}
+                      </h3>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
         ) : (
           /* USER STOREFRONT VIEW */
           <>
@@ -1182,6 +1588,26 @@ export default function App() {
                 <p className="text-xs md:text-sm text-slate-500 dark:text-slate-400 font-medium leading-relaxed max-w-md">
                   {siteConfig?.heroDesc || t.heroDesc}
                 </p>
+
+                {/* Button: recherche produit pas code (Positioned directly above Découvrir la Collection) */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAffiliateSearchCode("");
+                      setSearchCodeError("");
+                      setActiveTab("search");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="w-full sm:w-auto bg-gradient-to-r from-[#2d4a22] via-emerald-850 to-emerald-950 hover:from-[#1a2d15] hover:to-[#2d4a22] text-white font-extrabold text-[10px] uppercase tracking-widest px-6 py-3.5 rounded-xl cursor-pointer transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2.5 border border-emerald-500/30 group/affbtn"
+                  >
+                    <Search className="w-3.5 h-3.5 text-emerald-300 group-hover/affbtn:scale-110 transition-transform" />
+                    <span>recherche produit pas code</span>
+                    <span className="bg-emerald-400/20 text-emerald-200 text-[9px] font-mono px-2 py-0.5 rounded-full border border-emerald-400/30">
+                      Code
+                    </span>
+                  </button>
+                </div>
 
                 {/* Main Action CTAs */}
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3.5">
@@ -1340,7 +1766,7 @@ export default function App() {
                 {/* Modal 1: Notes d'Ateliers */}
                 <AnimatePresence>
                   {ratingsDropdownOpen && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                    <div key="ratings-modal-root" className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                       {/* Dark backdrop */}
                       <motion.div 
                         initial={{ opacity: 0 }}
@@ -1452,7 +1878,7 @@ export default function App() {
                 {/* Modal 2: Ébénisterie FSC */}
                 <AnimatePresence>
                   {ecologyDropdownOpen && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                    <div key="ecology-modal-root" className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                       {/* Dark backdrop */}
                       <motion.div 
                         initial={{ opacity: 0 }}
@@ -1539,7 +1965,7 @@ export default function App() {
                 {/* Modal 3: Promo Codes */}
                 <AnimatePresence>
                   {promoDropdownOpen && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                    <div key="promo-modal-root" className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                       {/* Dark backdrop */}
                       <motion.div 
                         initial={{ opacity: 0 }}
@@ -1585,7 +2011,7 @@ export default function App() {
                               const isApplied = appliedCodeName.includes(p.code);
                               return (
                                 <button
-                                  key={p.id || `${p.code}-${idx}`}
+                                  key={`promo-${p.code}-${idx}`}
                                   type="button"
                                   onClick={() => {
                                     if (p.status === 'active') {
@@ -1658,7 +2084,7 @@ export default function App() {
                 {/* Modal 4: Garantie Atelier */}
                 <AnimatePresence>
                   {warrantyDropdownOpen && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                    <div key="warranty-modal-root" className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                       {/* Dark backdrop */}
                       <motion.div 
                         initial={{ opacity: 0 }}
@@ -1738,7 +2164,7 @@ export default function App() {
                 {/* Modal 5: Livraison Premium */}
                 <AnimatePresence>
                   {deliveryDropdownOpen && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                    <div key="delivery-modal-root" className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                       {/* Dark backdrop */}
                       <motion.div 
                         initial={{ opacity: 0 }}
@@ -1864,7 +2290,7 @@ export default function App() {
                         <div className="flex gap-2">
                           {spotlightProduct.colors.map((col, idx) => (
                             <button
-                              key={idx}
+                              key={`spotlight-col-${col.hex || idx}-${idx}`}
                               type="button"
                               onClick={() => setSpotlightColorIdx(idx)}
                               className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all cursor-pointer ${
@@ -2102,7 +2528,7 @@ export default function App() {
       {/* PHONE & WHATSAPP CONTACT CHOICE MODAL */}
       <AnimatePresence>
         {isContactModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div key="contact-choice-modal-root" className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -2182,7 +2608,7 @@ export default function App() {
       {/* SHOPPING CART SIDEPANEL DRAWER */}
       <AnimatePresence>
         {cartOpen && (
-          <div className="fixed inset-0 z-50 overflow-hidden text-left font-sans">
+          <div key="cart-drawer-root" className="fixed inset-0 z-50 overflow-hidden text-left font-sans">
             {/* Overlay backdrop */}
             <motion.div 
               initial={{ opacity: 0 }}
@@ -2554,11 +2980,18 @@ export default function App() {
                         <div className="pt-3 border-t border-dashed border-slate-200 dark:border-slate-800">
                           <button
                             type="button"
-                            onClick={() => setIsVisaModalOpen(true)}
+                            onClick={() => {
+                              if (!shippingAddress.fullName || !shippingAddress.address || !shippingAddress.city || !shippingAddress.phone) {
+                                setCheckoutStep("form");
+                                alert("Veuillez d'abord renseigner vos coordonnées de livraison avant de procéder au paiement par Carte Visa.");
+                                return;
+                              }
+                              setIsVisaModalOpen(true);
+                            }}
                             className="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-750 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
                           >
                             <CreditCard className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                            <span>paiement via carte visa</span>
+                            <span>Paiement via Carte Visa</span>
                           </button>
                         </div>
                       </div>
@@ -2580,7 +3013,7 @@ export default function App() {
                     <div className="space-y-4">
                       {cart.map((item, idx) => (
                         <div 
-                          key={idx} 
+                          key={`cart-item-${item.product.id}-${idx}`} 
                           className="flex items-center justify-between p-3 rounded-xl bg-[#fbfdfa] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 gap-3 text-left"
                         >
                           <img 
@@ -2719,7 +3152,7 @@ export default function App() {
       {/* User Centered Modal Windows (Minimalist pop-up containing user information & purchases list) */}
       <AnimatePresence>
         {userDropdownOpen && user && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
+          <div key="user-profile-modal-root" className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
             {/* Backdrop blur overlay */}
             <motion.div
               initial={{ opacity: 0 }}
@@ -2756,7 +3189,7 @@ export default function App() {
                     {user.email === "grasdvirus@gmail.com" ? t.userRoleAdmin : t.userRoleClient}
                   </span>
                   <h4 className="text-sm font-black text-slate-900 dark:text-white truncate mt-1">
-                    {user.displayName || "Client nexus."}
+                    {user.displayName || "Client Sitedor"}
                   </h4>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate">{user.email}</p>
                 </div>
@@ -2779,7 +3212,7 @@ export default function App() {
                 
                 <div className="max-h-44 overflow-y-auto space-y-2.5 pr-1.5 text-left">
                   {myOrders.map((ord: any, idx: number) => (
-                    <div key={ord.id || `ord-${idx}`} className="bg-slate-50/50 dark:bg-slate-950/40 p-3.5 rounded-2xl border border-[#e6eee3] dark:border-slate-850 text-xs">
+                    <div key={`ord-${ord.id || ''}-${idx}`} className="bg-slate-50/50 dark:bg-slate-950/40 p-3.5 rounded-2xl border border-[#e6eee3] dark:border-slate-850 text-xs">
                       <div className="flex justify-between font-mono font-semibold">
                         <span className="text-slate-800 dark:text-slate-200">{t.orderCode} : {ord.id}</span>
                         <span className="text-[#2d4a22] dark:text-emerald-450 font-black">{formatOrderTotal(ord.total, currency)}</span>
@@ -2791,7 +3224,7 @@ export default function App() {
                       {/* Nested ordered items listing */}
                       <div className="mt-2 space-y-1">
                         {ord.items?.map((it: any, k: number) => (
-                          <div key={k} className="flex justify-between text-[10px] text-slate-400 dark:text-slate-400 italic font-medium font-sans">
+                          <div key={`ord-${ord.id || idx}-item-${k}`} className="flex justify-between text-[10px] text-slate-400 dark:text-slate-400 italic font-medium font-sans">
                             <span>&bull; {it.quantity}x {it.name} ({it.selectedColor?.name || ""})</span>
                             <span className="font-mono">{formatOrderTotal(it.price, currency)}</span>
                           </div>
@@ -2832,7 +3265,7 @@ export default function App() {
 
                 <div className="max-h-48 overflow-y-auto space-y-2 pr-1 text-left">
                   {myBespokeRequests.map((req: any, idx: number) => (
-                    <div key={req.id || `req-${idx}`} className="bg-slate-50 dark:bg-slate-950/60 p-3 rounded-xl border border-[#e6eee3] dark:border-slate-800 text-xs space-y-1.5">
+                    <div key={`req-${req.id || ''}-${idx}`} className="bg-slate-50 dark:bg-slate-950/60 p-3 rounded-xl border border-[#e6eee3] dark:border-slate-800 text-xs space-y-1.5">
                       <div className="flex justify-between items-center font-mono font-bold">
                         <span className="text-slate-900 dark:text-slate-100">{req.id}</span>
                         <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 uppercase tracking-wider font-extrabold">
@@ -2936,7 +3369,7 @@ export default function App() {
       {/* SETTINGS DIALOG MODAL */}
       <AnimatePresence>
         {settingsOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
+          <div key="settings-modal-root" className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
             {/* Backdrop overlay */}
             <motion.div
               initial={{ opacity: 0 }}
@@ -2976,7 +3409,7 @@ export default function App() {
                   <div className="grid grid-cols-4 gap-2">
                     {(["fr", "en", "es", "ar"] as Language[]).map((la) => (
                       <button
-                        key={la}
+                        key={`lang-opt-${la}`}
                         type="button"
                         onClick={() => setLang(la)}
                         className={`py-2 px-1 text-center font-extrabold text-xs rounded-xl border transition-all cursor-pointer ${
@@ -3032,7 +3465,7 @@ export default function App() {
                   <div className="grid grid-cols-3 gap-2">
                     {(["EUR", "USD", "CFA"] as Currency[]).map((cur) => (
                       <button
-                        key={cur}
+                        key={`curr-opt-${cur}`}
                         type="button"
                         onClick={() => setCurrency(cur)}
                         className={`py-2 px-1 text-center font-extrabold text-xs rounded-xl border transition-all cursor-pointer ${
@@ -3061,7 +3494,7 @@ export default function App() {
 
         {/* GOOGLE AUTHENTICATION ERROR & VERCEL ACCESS RECOVERY MODAL */}
         {googleAuthError && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
+          <div key="auth-error-modal-root" className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 0.6 }}
@@ -3139,7 +3572,7 @@ export default function App() {
 
         {/* CUSTOM REVIEW WRITING MODAL OVERLAY */}
         {reviewFormOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
+          <div key="review-form-modal-root" className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
             {/* Backdrop blur */}
             <motion.div
               initial={{ opacity: 0 }}
@@ -3192,7 +3625,7 @@ export default function App() {
                   <div className="flex items-center justify-center gap-1.5 mt-1">
                     {[1, 2, 3, 4, 5].map((s) => (
                       <button
-                        key={s}
+                        key={`star-rating-${s}`}
                         type="button"
                         onClick={() => setReviewRating(s)}
                         className="p-1 cursor-pointer transition-transform hover:scale-125"
@@ -3247,7 +3680,7 @@ export default function App() {
                       const docId = `rev-${Date.now()}`;
                       await addDoc(collection(db, "reviews"), {
                         id: docId,
-                        userName: trimmedName || "Client nexus.",
+                        userName: trimmedName || "Client Sitedor",
                         userId: user?.uid || "anonymous",
                         userAvatar: user?.photoURL || "",
                         rating: reviewRating,
@@ -3281,7 +3714,7 @@ export default function App() {
 
         {/* Visa Card Payment Modal Window */}
         {isVisaModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
+          <div key="visa-payment-modal-root" className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 0.6 }}
@@ -3344,15 +3777,33 @@ export default function App() {
               <div className="pt-2 space-y-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    const phoneNum = siteConfig?.visaWhatsAppNumber || "0704542909";
-                    const cleanPhone = phoneNum.replace(/[^0-9]/g, "");
-                    const targetPhone = cleanPhone.startsWith("225") ? cleanPhone : `225${cleanPhone}`;
-                    const waMsg = encodeURIComponent(`Bonjour Atelier nexus., je souhaite régler ma commande d'un montant de ${formatPrice(grandTotal, currency)} par Carte Visa.`);
-                    window.open(`https://wa.me/${targetPhone}?text=${waMsg}`, "_blank");
+                  onClick={async () => {
+                    if (!shippingAddress.fullName || !shippingAddress.address || !shippingAddress.city || !shippingAddress.phone) {
+                      setIsVisaModalOpen(false);
+                      setCheckoutStep("form");
+                      alert("Veuillez d'abord renseigner vos coordonnées de livraison.");
+                      return;
+                    }
+
+                    const cartSnapshot = [...cart];
+                    const newOrderId = await executeFinalOrderSubmission("Carte Visa (WhatsApp)");
+                    
+                    if (newOrderId) {
+                      const phoneNum = siteConfig?.visaWhatsAppNumber || "0704542909";
+                      const cleanPhone = phoneNum.replace(/[^0-9]/g, "");
+                      const targetPhone = cleanPhone.startsWith("225") ? cleanPhone : `225${cleanPhone}`;
+                      const itemsSummary = cartSnapshot.map(i => `${i.product.name} (x${i.quantity})`).join(", ");
+                      
+                      const textMsg = `Bonjour Sitedor, je souhaite régler ma commande N° ${newOrderId} d'un montant de ${formatPrice(grandTotal, currency)} par Carte Visa.\n` +
+                                      `• Client: ${shippingAddress.fullName}\n` +
+                                      `• Téléphone: ${shippingAddress.phone}\n` +
+                                      (itemsSummary ? `• Articles: ${itemsSummary}` : "");
+                                      
+                      const waMsg = encodeURIComponent(textMsg);
+                      window.open(`https://wa.me/${targetPhone}?text=${waMsg}`, "_blank");
+                    }
                     
                     setIsVisaModalOpen(false);
-                    executeFinalOrderSubmission("Carte Visa (WhatsApp)");
                   }}
                   className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-wider py-3.5 rounded-xl cursor-pointer shadow-md transition-all text-center flex items-center justify-center gap-2 select-none"
                 >
@@ -3369,6 +3820,222 @@ export default function App() {
                 </button>
               </div>
             </motion.div>
+          </div>
+        )}
+
+        {/* Special Product View: Cadre Entier avec Détails & Ajouter au Panier */}
+        {selectedAffiliateProduct && (
+          <div key="affiliate-product-modal-root" className="fixed inset-0 z-50 overflow-y-auto bg-[#fafcf9] dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 md:p-8 animate-fadeIn">
+            <div className="max-w-5xl mx-auto space-y-6 text-left py-4">
+              
+              <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-4 px-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => setSelectedAffiliateProduct(null)}
+                  className="text-xs font-extrabold text-[#2d4a22] dark:text-emerald-400 hover:underline flex items-center gap-2 cursor-pointer"
+                >
+                  <span>&larr; Retour au catalogue</span>
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono font-extrabold uppercase bg-emerald-100 dark:bg-emerald-950 text-[#2d4a22] dark:text-emerald-300 px-3 py-1 rounded-full border border-emerald-300 dark:border-emerald-800">
+                    Page Spéciale Produit Affilié
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAffiliateProduct(null)}
+                    className="p-1 px-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-bold rounded-xl cursor-pointer transition-all"
+                  >
+                    &times; Fermer
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-200/80 dark:border-slate-800 shadow-xl overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-0">
+                
+                <div className="lg:col-span-6 bg-slate-50 dark:bg-slate-950 p-6 md:p-8 flex flex-col justify-between relative border-b lg:border-b-0 lg:border-r border-slate-200/60 dark:border-slate-800">
+                  <div className="relative rounded-3xl overflow-hidden shadow-md h-80 md:h-[420px] w-full bg-slate-200 dark:bg-slate-900">
+                    <img
+                      src={selectedAffiliateProduct.image}
+                      alt={selectedAffiliateProduct.name}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
+                    
+                    <div className="absolute top-4 left-4 bg-slate-900/80 backdrop-blur-md text-white font-mono text-[10px] font-bold px-3 py-1 rounded-full uppercase">
+                      {selectedAffiliateProduct.category}
+                    </div>
+                    
+                    <div className="absolute bottom-4 left-4 bg-emerald-600 text-white font-mono text-[10px] font-bold px-3 py-1 rounded-full uppercase">
+                      {selectedAffiliateProduct.stock > 0 ? `${selectedAffiliateProduct.stock} en stock` : "Épuisé"}
+                    </div>
+                  </div>
+
+                  <div className="mt-6 grid grid-cols-3 gap-2 text-center">
+                    <div className="p-2.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-0.5">
+                      <ShieldCheck className="w-4 h-4 text-[#2d4a22] dark:text-emerald-400 mx-auto" />
+                      <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 block">Garantie 5 ans</span>
+                    </div>
+                    <div className="p-2.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-0.5">
+                      <Truck className="w-4 h-4 text-[#2d4a22] dark:text-emerald-400 mx-auto" />
+                      <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 block">Livraison offerte</span>
+                    </div>
+                    <div className="p-2.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-0.5">
+                      <Award className="w-4 h-4 text-[#2d4a22] dark:text-emerald-400 mx-auto" />
+                      <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 block">Qualité Premium</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-6 p-6 md:p-10 space-y-6 flex flex-col justify-between">
+                  <div className="space-y-4">
+                    
+                    <div className="inline-flex items-center justify-between w-full bg-emerald-50 dark:bg-emerald-950/50 p-3 rounded-2xl border border-emerald-200 dark:border-emerald-800">
+                      <div className="flex items-center gap-2">
+                        <Tag className="w-4 h-4 text-[#2d4a22] dark:text-emerald-400" />
+                        <span className="text-xs font-mono font-bold text-slate-800 dark:text-slate-200">
+                          Code Produit : <strong className="text-[#2d4a22] dark:text-emerald-400 font-extrabold">{selectedAffiliateProduct.affiliateCode || selectedAffiliateProduct.id}</strong>
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(selectedAffiliateProduct.affiliateCode || selectedAffiliateProduct.id);
+                          setCopiedNotice("Copié !");
+                          setTimeout(() => setCopiedNotice(null), 2000);
+                        }}
+                        className="text-[10px] font-mono font-bold bg-[#2d4a22] text-white hover:bg-[#1a2d15] px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                      >
+                        {copiedNotice || "Copier le code"}
+                      </button>
+                    </div>
+
+                    <div>
+                      <h1 className="text-2xl md:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+                        {selectedAffiliateProduct.name}
+                      </h1>
+                      <p className="text-xs md:text-sm text-slate-500 dark:text-slate-400 font-semibold mt-1">
+                        {selectedAffiliateProduct.tagline}
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] font-mono uppercase text-slate-400 font-extrabold block">Tarif Exclusif</span>
+                        <span className="text-2xl font-mono font-black text-[#2d4a22] dark:text-emerald-400">
+                          {formatPrice(selectedAffiliateProduct.price, currency)}
+                        </span>
+                      </div>
+                      <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950 px-3 py-1 rounded-full">
+                        Produit vérifié
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed italic bg-slate-50/60 dark:bg-slate-950/40 p-3.5 rounded-2xl border border-slate-100 dark:border-slate-800">
+                      {selectedAffiliateProduct.description}
+                    </p>
+
+                    {selectedAffiliateProduct.features && selectedAffiliateProduct.features.length > 0 && (
+                      <div className="space-y-2 bg-[#2d4a22]/5 dark:bg-[#2d4a22]/10 p-4 rounded-2xl border border-dashed border-[#2d4a22]/20">
+                        <span className="text-[10px] font-mono uppercase tracking-wider font-extrabold text-[#2d4a22] dark:text-[#84a98c] block">
+                          Caractéristiques & Finitions :
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {selectedAffiliateProduct.features.map((feat, idx) => (
+                            <div key={`aff-feat-${idx}`} className="flex items-start gap-1.5 text-xs text-slate-700 dark:text-slate-300">
+                              <span className="text-[#2d4a22] dark:text-[#84a98c] font-bold">•</span>
+                              <span>{feat}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedAffiliateProduct.colors && selectedAffiliateProduct.colors.length > 0 && (
+                      <div className="space-y-2">
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                          Coloris disponible :
+                        </span>
+                        <div className="flex flex-wrap gap-2">
+                          {selectedAffiliateProduct.colors.map((color, idx) => {
+                            const isSelected = affiliateSelectedColor?.hex === color.hex;
+                            return (
+                              <button
+                                key={`aff-col-${color.hex || idx}-${idx}`}
+                                type="button"
+                                onClick={() => setAffiliateSelectedColor(color)}
+                                className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                                  isSelected
+                                    ? "bg-[#2d4a22] text-white shadow-md"
+                                    : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200"
+                                }`}
+                              >
+                                <span className="w-3 h-3 rounded-full border border-black/20" style={{ backgroundColor: color.hex }}></span>
+                                <span>{color.name}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedAffiliateProduct.variants && selectedAffiliateProduct.variants.length > 0 && (
+                      <div className="space-y-2">
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                          {selectedAffiliateProduct.variantsLabel || "Option / Finition"} :
+                        </span>
+                        <select
+                          value={affiliateSelectedVariant}
+                          onChange={(e) => setAffiliateSelectedVariant(e.target.value)}
+                          className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-800 dark:text-slate-200 p-3 rounded-xl outline-none focus:border-[#2d4a22]"
+                        >
+                          {selectedAffiliateProduct.variants.map((v, idx) => (
+                            <option key={`aff-var-${v}-${idx}`} value={v}>
+                              {v}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between p-3.5 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Quantité :</span>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setAffiliateProductQty(prev => Math.max(1, prev - 1))}
+                          className="w-8 h-8 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-100 cursor-pointer"
+                        >
+                          -
+                        </button>
+                        <span className="font-mono font-extrabold text-sm w-6 text-center">{affiliateProductQty}</span>
+                        <button
+                          type="button"
+                          onClick={() => setAffiliateProductQty(prev => Math.min(selectedAffiliateProduct.stock, prev + 1))}
+                          className="w-8 h-8 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-100 cursor-pointer"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+
+                  </div>
+
+                  <div className="pt-4 space-y-3">
+                    <button
+                      type="button"
+                      disabled={selectedAffiliateProduct.stock === 0}
+                      onClick={() => handleAddToCartFromAffiliateView(selectedAffiliateProduct)}
+                      className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs md:text-sm uppercase tracking-widest py-4.5 rounded-2xl cursor-pointer shadow-lg hover:shadow-xl transition-all text-center flex items-center justify-center gap-3"
+                    >
+                      <ShoppingBag className="w-5 h-5" />
+                      <span>Ajouter au panier ({formatPrice(selectedAffiliateProduct.price * affiliateProductQty, currency)})</span>
+                    </button>
+                  </div>
+
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

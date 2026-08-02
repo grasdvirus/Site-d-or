@@ -11,6 +11,7 @@ export interface Product {
   variants?: string[]; // e.g., ["Red Cherry", "Brown Gateron"] or ["Standard", "Extra Wide"]
   features: string[];
   stock: number;
+  affiliateCode?: string;
 }
 
 export interface CartItem {

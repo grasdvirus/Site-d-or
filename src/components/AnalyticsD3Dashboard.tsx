@@ -512,7 +512,7 @@ export default function AnalyticsD3Dashboard({ products, orders, productRequests
           {/* Legend */}
           <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
             {donutData.map((d, i) => (
-              <div key={i} className="flex items-center justify-between text-[11px] font-sans">
+              <div key={`donut-leg-${d.category}-${i}`} className="flex items-center justify-between text-[11px] font-sans">
                 <span className="text-slate-600 dark:text-slate-300 flex items-center gap-2 truncate">
                   <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: ["#2d4a22", "#527845", "#d97706", "#4f46e5", "#0284c7", "#059669"][i % 6] }}></span>
                   {d.category}

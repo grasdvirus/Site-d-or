@@ -202,7 +202,7 @@ export default function ReviewsCarousel({ lang = "fr", currentUser }: ReviewsCar
           <div>
             <div className="flex text-amber-500">
               {[...Array(5)].map((_, i) => (
-                <Star key={i} className={`w-3.5 h-3.5 fill-current ${i < Math.floor(Number(avgRating)) ? "opacity-100" : "opacity-30"}`} />
+                <Star key={`avg-star-${i}`} className={`w-3.5 h-3.5 fill-current ${i < Math.floor(Number(avgRating)) ? "opacity-100" : "opacity-30"}`} />
               ))}
             </div>
             <p className="text-[9px] font-mono uppercase font-bold text-slate-400 dark:text-slate-400 mt-1">
@@ -256,7 +256,7 @@ export default function ReviewsCarousel({ lang = "fr", currentUser }: ReviewsCar
                     <div className="flex text-amber-500">
                       {[...Array(5)].map((_, idx) => (
                         <Star 
-                          key={idx} 
+                          key={`rev-star-${currentReview.id || 'c'}-${idx}`} 
                           className={`w-3.5 h-3.5 fill-current ${idx < currentReview.rating ? "" : "opacity-25"}`} 
                         />
                       ))}

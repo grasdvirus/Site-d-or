@@ -476,7 +476,7 @@ export default function InteractiveModel({
             const isCompleted = currentStep > st.num;
             const isActive = currentStep === st.num;
             return (
-              <div key={st.num} className="flex items-center">
+              <div key={`step-head-${st.num}-${idx}`} className="flex items-center">
                 <button
                   type="button"
                   disabled={st.num > currentStep && !selectedCategory}
@@ -532,12 +532,12 @@ export default function InteractiveModel({
 
                 {/* Grid layout of stylish cards */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-4.5">
-                  {CATEGORIES.map((cat) => {
+                  {CATEGORIES.map((cat, idx) => {
                     const CatIcon = cat.icon;
                     const isSel = selectedCategory === cat.id;
                     return (
                       <button
-                        key={cat.id}
+                        key={`cat-${cat.id}-${idx}`}
                         type="button"
                         onClick={() => handleSelectCategory(cat.id)}
                         className={`group p-4 md:p-5 rounded-2xl border text-left flex flex-col justify-between gap-4 transition-all relative overflow-hidden cursor-pointer ${
@@ -602,11 +602,11 @@ export default function InteractiveModel({
 
                 {/* Map dynamic fields */}
                 <div className="space-y-5">
-                  {(CATEGORY_FIELDS[selectedCategory] || []).map((f) => {
+                  {(CATEGORY_FIELDS[selectedCategory] || []).map((f, fIdx) => {
                     const val = characteristics[f.name] || "";
                     
                     return (
-                      <div key={f.name} className="space-y-2">
+                      <div key={`catfield-${selectedCategory}-${f.name}-${fIdx}`} className="space-y-2">
                         <label className="text-xs font-black text-slate-800 dark:text-slate-205 flex items-center justify-between">
                           <span>{f.label}</span>
                           {f.type === "slider" && (
@@ -624,7 +624,7 @@ export default function InteractiveModel({
                             className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-800 dark:text-slate-200 outline-none cursor-pointer focus:border-[#2d4a22] transition-colors"
                           >
                             {f.options?.map((opt, idx) => (
-                              <option key={`${opt}-${idx}`} value={opt}>{opt}</option>
+                              <option key={`fselect-${f.name}-${opt}-${idx}`} value={opt}>{opt}</option>
                             ))}
                           </select>
                         )}
@@ -666,7 +666,7 @@ export default function InteractiveModel({
                               const isActive = val === opt;
                               return (
                                 <button
-                                  key={`${opt}-${idx}`}
+                                  key={`fradio-${f.name}-${opt}-${idx}`}
                                   type="button"
                                   onClick={() => setCharacteristics(prev => ({ ...prev, [f.name]: opt }))}
                                   className={`px-3 py-2 rounded-xl text-xs font-bold font-sans cursor-pointer transition-all ${
@@ -685,11 +685,11 @@ export default function InteractiveModel({
                         {/* Type: INTERACTIVE COLOR SPOTS */}
                         {f.type === "color" && (
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                            {AVAILABLE_COLORS.map((col) => {
+                            {AVAILABLE_COLORS.map((col, cIdx) => {
                               const isActive = val === col.name;
                               return (
                                 <button
-                                  key={col.name}
+                                  key={`colspot-${col.name}-${cIdx}`}
                                   type="button"
                                   onClick={() => setCharacteristics(prev => ({ ...prev, [f.name]: col.name }))}
                                   className={`flex items-center gap-2 p-2 rounded-xl border text-left cursor-pointer transition-all ${
@@ -776,11 +776,11 @@ export default function InteractiveModel({
                   <div className="space-y-2">
                     <label className="text-xs font-black text-slate-800 dark:text-slate-200">Quantité recherchée</label>
                     <div className="flex gap-1.5">
-                      {["1", "2", "3", "4", "5+"].map((q) => {
+                      {["1", "2", "3", "4", "5+"].map((q, qIdx) => {
                         const isQSel = desiredQuantity === q;
                         return (
                           <button
-                            key={q}
+                            key={`des-qty-${q}-${qIdx}`}
                             type="button"
                             onClick={() => setDesiredQuantity(q)}
                             className={`flex-1 py-2 text-xs font-black rounded-lg transition-all cursor-pointer ${
@@ -1127,7 +1127,7 @@ export default function InteractiveModel({
                     </span>
                     <div className="flex flex-wrap gap-1.5">
                       {aiSuggestions.similarCategories.map((c, idx) => (
-                        <span key={`${c}-${idx}`} className="text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-2.5 py-1 rounded-md">
+                        <span key={`sim-cat-${c}-${idx}`} className="text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-2.5 py-1 rounded-md">
                           {c}
                         </span>
                       ))}
@@ -1146,7 +1146,7 @@ export default function InteractiveModel({
                       </span>
                       <div className="space-y-1.5">
                         {aiSuggestions.alternatives.map((alt, idx) => (
-                          <div key={alt.id || `${alt.name}-${idx}`} className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 flex justify-between items-start gap-4">
+                          <div key={`alt-${alt.id || alt.name}-${idx}`} className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 flex justify-between items-start gap-4">
                             <div className="text-left">
                               <span className="text-[11px] font-bold text-slate-805 dark:text-white block">{alt.name}</span>
                               <span className="text-[9px] text-slate-400 block leading-normal">{alt.description}</span>
@@ -1168,7 +1168,7 @@ export default function InteractiveModel({
                       </span>
                       <div className="space-y-1.5">
                         {aiSuggestions.performantUpgrades.map((upg, idx) => (
-                          <div key={upg.id || `${upg.name}-${idx}`} className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 flex justify-between items-start gap-4">
+                          <div key={`upg-${upg.id || upg.name}-${idx}`} className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 flex justify-between items-start gap-4">
                             <div className="text-left">
                               <span className="text-[11px] font-bold text-slate-805 dark:text-white block">{upg.name}</span>
                               <span className="text-[9px] text-slate-400 block leading-normal">{upg.description}</span>
@@ -1190,7 +1190,7 @@ export default function InteractiveModel({
                       </span>
                       <div className="space-y-1.5">
                         {aiSuggestions.compatibleAccessories.map((acc, idx) => (
-                          <div key={acc.id || `${acc.name}-${idx}`} className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-101 dark:border-slate-800 flex justify-between items-start gap-4">
+                          <div key={`acc-${acc.id || acc.name}-${idx}`} className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-101 dark:border-slate-800 flex justify-between items-start gap-4">
                             <div className="text-left">
                               <span className="text-[11px] font-bold text-slate-805 dark:text-white block">{acc.name}</span>
                               <span className="text-[9px] text-slate-450 block leading-normal">{acc.description}</span>

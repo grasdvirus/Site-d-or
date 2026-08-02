@@ -24,12 +24,20 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
   
   // Adding animation feedback state
   const [addedProductIds, setAddedProductIds] = useState<Record<string, boolean>>({});
+  const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const [selectedColors, setSelectedColors] = useState<Record<string, { name: string; hex: string }>>({});
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
 
+  const handleCopyAffiliateCode = (e: React.MouseEvent, code: string, id: string) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(code);
+    setCopiedCodeId(id);
+    setTimeout(() => setCopiedCodeId(null), 2000);
+  };
+
   // Categories list matching reference image (internal keys represent pristine filter tokens)
   const categoriesList = useMemo(() => {
-    return ["Tous", ...(categories || ["Lounge", "Office", "Dining", "Rocking"])];
+    return Array.from(new Set(["Tous", ...(categories || ["Lounge", "Office", "Dining", "Rocking"])]));
   }, [categories]);
 
   // Helper translation mapping for categories
@@ -44,13 +52,25 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
     }
   };
 
+  // Utility function for accent-insensitive search matching
+  const normalizeStr = (str: string = "") =>
+    str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
   // Filter products by category and query
   const filteredProducts = useMemo(() => {
+    const q = normalizeStr(searchQuery);
     return products.filter((product) => {
       const matchesCategory = selectedCategory === "Tous" || product.category === selectedCategory;
-      const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            product.tagline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            product.description.toLowerCase().includes(searchQuery.toLowerCase());
+      if (!q) return matchesCategory;
+      
+      const matchesSearch =
+        normalizeStr(product.name).includes(q) ||
+        normalizeStr(product.tagline || "").includes(q) ||
+        normalizeStr(product.description || "").includes(q) ||
+        normalizeStr(product.category).includes(q) ||
+        normalizeStr(product.affiliateCode || "").includes(q) ||
+        normalizeStr(product.id).includes(q);
+
       return matchesCategory && matchesSearch;
     });
   }, [products, selectedCategory, searchQuery]);
@@ -96,9 +116,9 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-center gap-4 bg-[#f4f8f3] dark:bg-slate-900/60 p-4.5 rounded-3xl border border-[#e6eee3] dark:border-slate-800 max-w-2xl mx-auto">
         {/* Categories Pills list */}
         <div className="flex flex-wrap gap-2 justify-center py-1">
-          {categoriesList.map((cat) => (
+          {categoriesList.map((cat, idx) => (
             <button
-              key={cat}
+              key={`price-cat-${cat}-${idx}`}
               type="button"
               onClick={() => setSelectedCategory(cat)}
               className={`px-4.5 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer whitespace-nowrap select-none ${
@@ -115,7 +135,7 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
 
       {/* Main Catalog Grid */}
       <div className={`grid ${layoutMode === "collection" ? "grid-cols-1 md:grid-cols-2 max-w-4xl" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 max-w-5xl"} gap-8 mx-auto items-stretch`}>
-        {filteredProducts.map((product) => {
+        {filteredProducts.map((product, pIdx) => {
           const discount = getProductDiscount(product.id);
           const defaultColor = product.colors[0] || { name: "Slate", hex: "#1e293b" };
           const activeColor = selectedColors[product.id] || defaultColor;
@@ -126,7 +146,7 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
 
           return (
             <div
-              key={product.id}
+              key={`price-prod-${product.id}-${pIdx}`}
               className="group/card relative bg-white dark:bg-slate-900 rounded-[1.8rem] border border-[#e2eae0]/80 dark:border-slate-800 overflow-hidden flex flex-col justify-between transition-all duration-300 sleek-shadow-sm hover:sleek-shadow-md hover:border-[#2d4a22]/30"
             >
               {/* Image box frame with overlay layout */}
@@ -190,6 +210,22 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-450 leading-normal mt-1 font-semibold">{product.tagline}</p>
                   
+                  {/* Affiliate Code Badge */}
+                  {product.affiliateCode && (
+                    <div className="mt-2 flex items-center justify-between bg-emerald-50/80 dark:bg-emerald-950/40 px-2.5 py-1.5 rounded-xl border border-emerald-200/80 dark:border-emerald-900/60 text-left">
+                      <span className="text-[10px] font-mono text-slate-600 dark:text-slate-300 font-semibold">
+                        Code affiliation : <strong className="text-[#2d4a22] dark:text-emerald-400 font-bold">{product.affiliateCode}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => handleCopyAffiliateCode(e, product.affiliateCode!, product.id)}
+                        className="text-[9px] font-mono font-bold text-[#2d4a22] dark:text-emerald-400 hover:underline cursor-pointer ml-1"
+                      >
+                        {copiedCodeId === product.id ? "✓ Copié !" : "Copier"}
+                      </button>
+                    </div>
+                  )}
+                  
                   {/* Detailed Description */}
                   <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-2 leading-relaxed bg-slate-50/50 dark:bg-slate-950/40 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 italic">
                     {product.description}
@@ -202,7 +238,7 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                         {lang === "en" ? "Specifications :" : lang === "es" ? "Especificaciones :" : lang === "ar" ? "المواصفات :" : "Caractéristiques :"}
                       </span>
                       {product.features.map((feat, fidx) => (
-                        <div key={fidx} className="flex items-start gap-1 text-[10px] text-slate-705 dark:text-slate-300">
+                        <div key={`pfeat-${product.id}-${fidx}`} className="flex items-start gap-1 text-[10px] text-slate-705 dark:text-slate-300">
                           <span className="text-[#2d4a22] dark:text-[#84a98c] mr-1 flex-shrink-0">•</span>
                           <span className="leading-tight">{feat}</span>
                         </div>
@@ -227,7 +263,7 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                     </span>
                     {product.colors.map((color, idx) => (
                       <button
-                        key={idx}
+                        key={`pcol-${product.id}-${color.hex || idx}-${idx}`}
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -259,7 +295,7 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                       className="bg-[#f4f8f3] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 text-[10px] font-bold text-slate-755 dark:text-slate-200 py-1 px-2 rounded-lg cursor-pointer outline-none"
                     >
                       {product.variants.map((v, idx) => (
-                        <option key={idx} value={v}>
+                        <option key={`pvar-${product.id}-${v}-${idx}`} value={v}>
                           {v}
                         </option>
                       ))}

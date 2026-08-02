@@ -23,7 +23,7 @@ export default function FAQ({ lang = "fr", customFaqs }: FAQProps) {
         const isOpen = openIndex === idx;
         return (
           <div
-            key={idx}
+            key={`faq-${faq.question || idx}-${idx}`}
             className="bg-white border border-slate-100 dark:border-slate-800 dark:bg-slate-900 rounded-2xl sleek-shadow-sm overflow-hidden transition-all hover:border-indigo-100/70 hover:sleek-shadow-md"
           >
             <button

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Lock, Unlock, Plus, Trash2, Edit2, Check, X, Tag, Layers, Coins, ChevronDown, ChevronUp, Image as ImageIcon, Sliders, CheckCircle2, AlertTriangle, Hammer, ShieldCheck, Box, UserCheck, Settings, HelpCircle, FileText, Globe, Mail, Send, Inbox, RefreshCw, BarChart3, TrendingUp } from "lucide-react";
 import { Product, PromoCode } from "../types";
+import { generateAffiliateCode } from "../data";
 import { db } from "../firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { formatPrice, formatOrderTotal, formatBespokePrice } from "../translations";
@@ -85,7 +86,7 @@ export default function AdminPortal({
   // Key features (up to 5 bullets)
   const [featureInput, setFeatureInput] = useState("");
   const [featuresList, setFeaturesList] = useState<string[]>([
-    "Conception artisanale nexus. exclusive",
+    "Conception artisanale Sitedor exclusive",
     "Garantie constructeur prolongée incluse"
   ]);
 
@@ -128,7 +129,7 @@ export default function AdminPortal({
     setVariantsLabel("Taille");
     setVariantsList(["Standard Edition"]);
     setFeaturesList([
-      "Conception artisanale nexus. exclusive",
+      "Conception artisanale Sitedor exclusive",
       "Garantie constructeur prolongée incluse"
     ]);
   };
@@ -381,8 +382,8 @@ export default function AdminPortal({
           localStorage.setItem("site_config_general", JSON.stringify(data));
         } else if (!localCopy) {
           // Default fallbacks matching beautiful design values of the atelier
-          setFooterAbout("nexus. est un atelier artisanal d'exception engagé dans la création de mobilier haut de gamme éco-responsable. Chaque pièce allie lignes sculpturées et confort absolu.");
-          setFooterContact("Atelier Central : Rue des Artisans d'Art, Zone Éco-Nexus • Écrivez-nous : contact@nexus-atelier.com • Service Client : +225 07 48 59 10 20");
+          setFooterAbout("Sitedor est un atelier artisanal d'exception engagé dans la création de mobilier haut de gamme éco-responsable. Chaque pièce allie lignes sculpturées et confort absolu.");
+          setFooterContact("Atelier Central : Rue des Artisans d'Art, Zone Éco-Sitedor • Écrivez-nous : contact@sitedor.com • Service Client : +225 07 48 59 10 20");
           setFooterWarranty("Garantie Constructeur Prolongée de 5 Ans • Service de Livraison & d'Installation Offert partout à Abidjan.");
           setHeroTitle("L'Atelier d'Artisanat d'Art d'Exception.");
           setHeroSub("DESIGN RAFFINÉ & ACCENTS NATURELS");
@@ -728,7 +729,7 @@ export default function AdminPortal({
         const updatedProduct: Product = {
           ...editingProduct,
           name: name.trim(),
-          tagline: tagline.trim() || "Une création nexus. élégante.",
+          tagline: tagline.trim() || "Une création Sitedor élégante.",
           description: description.trim() || "Aucune description fournie.",
           price: priceNum,
           image: finalImage,
@@ -737,7 +738,8 @@ export default function AdminPortal({
           variantsLabel: variantsLabel.trim() || undefined,
           variants: variantsList.length > 0 ? variantsList : undefined,
           features: featuresList.length > 0 ? featuresList : ["Matériaux recyclés eco-conçus", "Emballage carton bio-dégradable"],
-          stock: isNaN(stockNum) ? 10 : stockNum
+          stock: isNaN(stockNum) ? 10 : stockNum,
+          affiliateCode: editingProduct.affiliateCode || generateAffiliateCode(editingProduct.id || name.trim())
         };
 
         if (onUpdateProduct) {
@@ -751,10 +753,11 @@ export default function AdminPortal({
         setNotifMessage(`Le produit "${updatedProduct.name}" a été modifié avec succès !`);
       } else {
         // Create mode
+        const newId = `sitedor-${Date.now()}`;
         const newProduct: Product = {
-          id: `nexus-${Date.now()}`,
+          id: newId,
           name: name.trim(),
-          tagline: tagline.trim() || "Une création nexus. élégante.",
+          tagline: tagline.trim() || "Une création Sitedor élégante.",
           description: description.trim() || "Aucune description fournie.",
           price: priceNum,
           image: finalImage,
@@ -763,7 +766,8 @@ export default function AdminPortal({
           variantsLabel: variantsLabel.trim() || undefined,
           variants: variantsList.length > 0 ? variantsList : undefined,
           features: featuresList.length > 0 ? featuresList : ["Matériaux recyclés eco-conçus", "Emballage carton bio-dégradable"],
-          stock: isNaN(stockNum) ? 10 : stockNum
+          stock: isNaN(stockNum) ? 10 : stockNum,
+          affiliateCode: generateAffiliateCode(newId)
         };
 
         await onAddProduct(newProduct);
@@ -783,7 +787,7 @@ export default function AdminPortal({
       ]);
       setVariantsList(["Standard Edition"]);
       setFeaturesList([
-        "Conception artisanale nexus. exclusive",
+        "Conception artisanale Sitedor exclusive",
         "Garantie constructeur prolongée incluse"
       ]);
 
@@ -1280,7 +1284,7 @@ export default function AdminPortal({
                   className="w-full bg-slate-50 border border-slate-100 text-xs rounded-xl px-3.5 py-2.5 text-slate-700 outline-none cursor-pointer focus:bg-white focus:border-[#2d4a22]"
                 >
                   {categories.map((cat, idx) => (
-                    <option key={`${cat}-${idx}`} value={cat}>{cat}</option>
+                    <option key={`adm-cat-opt-${cat}-${idx}`} value={cat}>{cat}</option>
                   ))}
                 </select>
               </div>
@@ -1441,7 +1445,7 @@ export default function AdminPortal({
               <div className="flex flex-wrap gap-2 pt-1">
                 {colorsList.map((c, idx) => (
                   <span 
-                    key={`${c.hex}-${idx}`}
+                    key={`adm-col-${c.hex || idx}-${idx}`}
                     className="flex items-center gap-2 bg-white text-slate-700 font-bold text-[10px] p-1.5 px-3 rounded-xl border border-slate-100 shadow-3xs"
                   >
                     <span className="w-2.5 h-2.5 rounded-full border border-black/10 inline-block" style={{ backgroundColor: c.hex }}></span>
@@ -1499,7 +1503,7 @@ export default function AdminPortal({
               <div className="flex flex-wrap gap-2 pt-1">
                 {variantsList.map((v, idx) => (
                   <span 
-                    key={`${v}-${idx}`}
+                    key={`adm-var-${v}-${idx}`}
                     className="flex items-center gap-1.5 bg-white text-slate-600 font-mono font-semibold text-[10px] p-1.5 px-3 rounded-lg border border-slate-150"
                   >
                     {v}
@@ -1538,7 +1542,7 @@ export default function AdminPortal({
 
               <div className="space-y-1.5 max-h-[100px] overflow-y-auto pr-1">
                 {featuresList.map((f, i) => (
-                  <div key={i} className="flex items-center justify-between text-xs bg-white p-2 rounded-xl border border-slate-100">
+                  <div key={`feat-bullet-${i}`} className="flex items-center justify-between text-xs bg-white p-2 rounded-xl border border-slate-100">
                     <span className="font-sans font-medium text-slate-600">{f}</span>
                     <button 
                       type="button" 
@@ -1582,9 +1586,9 @@ export default function AdminPortal({
             </div>
 
             <div className="space-y-3.5 max-h-[800px] overflow-y-auto pr-1">
-              {products.map((p) => (
+              {products.map((p, idx) => (
                 <div 
-                  key={p.id} 
+                  key={`adm-prod-${p.id}-${idx}`} 
                   className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50/50 border border-slate-101/80 hover:bg-white transition-all space-x-3 group"
                 >
                   <div className="flex items-center space-x-3 min-w-0">
@@ -1605,6 +1609,9 @@ export default function AdminPortal({
                         <span className="text-slate-500">{p.category}</span>
                       </p>
                       <p className="text-[9px] text-indigo-600 font-bold font-mono">Stock : {p.stock} pièces</p>
+                      {p.affiliateCode && (
+                        <p className="text-[9px] font-mono font-bold text-[#2d4a22]">Code d'affiliation : {p.affiliateCode}</p>
+                      )}
                     </div>
                   </div>
 
@@ -1743,7 +1750,7 @@ export default function AdminPortal({
                     const isEditing = editingCategory === cat;
                     return (
                       <div 
-                        key={`${cat}-${idx}`}
+                        key={`adm-cat-item-${cat}-${idx}`}
                         className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-50/50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800/85 hover:bg-white dark:hover:bg-slate-900 transition-all gap-3 shadow-sm"
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -1998,7 +2005,7 @@ export default function AdminPortal({
                   ) : (
                     promoCodes.map((promo, idx) => (
                       <div 
-                        key={promo.id || `${promo.code}-${idx}`}
+                        key={`adm-promo-item-${promo.code}-${idx}`}
                         className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50/50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800 hover:bg-white dark:hover:bg-slate-900 transition-all gap-3 shadow-sm"
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0 text-left">
@@ -2229,7 +2236,7 @@ export default function AdminPortal({
             
             <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
               {faqs.map((faq, i) => (
-                <div key={i} className="bg-slate-50 p-3.5 rounded-2xl border border-slate-150 relative text-xs">
+                <div key={`admin-faq-${faq.question || i}-${i}`} className="bg-slate-50 p-3.5 rounded-2xl border border-slate-150 relative text-xs">
                   <p className="font-bold text-slate-800 pr-8">Q : {faq.question}</p>
                   <p className="text-slate-500 mt-1">R : {faq.answer}</p>
                   <button
@@ -2499,7 +2506,7 @@ export default function AdminPortal({
               const isExpanded = !!expandedOrders[ord.id];
               return (
                 <div 
-                  key={ord.id || `ord-${idx}`} 
+                  key={`adm-ord-${ord.id || ''}-${idx}`} 
                   className="bg-slate-50/60 dark:bg-slate-950/40 border border-slate-200/50 dark:border-slate-800/80 rounded-2xl p-4 md:p-5 space-y-4 shadow-3xs transition-all duration-300"
                 >
                   {/* Collapsible Header row */}
@@ -2623,7 +2630,7 @@ export default function AdminPortal({
                             </span>
                             {(ord.email || ord.shippingAddress?.email) && (
                               <a
-                                href={`mailto:${ord.email || ord.shippingAddress?.email}?subject=Votre commande ${ord.id} - Atelier Nexus Lounge&body=Bonjour ${ord.fullName || ord.shippingAddress?.fullName || 'Client d\'exception'},%0D%0A%0D%0ANous vous remercions pour votre commande d'exception ${ord.id} d'un montant de ${ord.total ? ord.total.toLocaleString() : '---'} CFA.%0D%0A%0D%0ANos artisans préparent votre mobilier avec la plus haute exigence.%0D%0A%0D%0ACordialement,%0D%0AL'Atelier Nexus Lounge`}
+                                href={`mailto:${ord.email || ord.shippingAddress?.email}?subject=Votre commande ${ord.id} - Sitedor&body=Bonjour ${ord.fullName || ord.shippingAddress?.fullName || 'Client d\'exception'},%0D%0A%0D%0ANous vous remercions pour votre commande d'exception ${ord.id} d'un montant de ${ord.total ? ord.total.toLocaleString() : '---'} CFA.%0D%0A%0D%0ANos artisans préparent votre mobilier avec la plus haute exigence.%0D%0A%0D%0ACordialement,%0D%0AL'Atelier Sitedor`}
                                 onClick={(e) => e.stopPropagation()}
                                 className="ml-2.5 inline-flex items-center gap-1 px-2 py-0.5 bg-[#2d4a22]/10 hover:bg-[#2d4a22]/15 text-[#2d4a22] dark:text-[#a3e635] text-[9px] uppercase font-black rounded cursor-pointer transition-all border border-[#2d4a22]/10"
                                 title="Contacter par e-mail"
@@ -2654,7 +2661,7 @@ export default function AdminPortal({
                         
                         <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
                           {ord.items?.map((it: any, index: number) => (
-                            <div key={index} className="flex items-start justify-between border-b border-slate-50 dark:border-slate-800/40 pb-2 text-[11px] gap-2">
+                            <div key={`adm-ord-item-${ord.id || ''}-${index}`} className="flex items-start justify-between border-b border-slate-50 dark:border-slate-800/40 pb-2 text-[11px] gap-2">
                               <div className="space-y-0.5 min-w-0">
                                 <span className="font-bold text-slate-800 dark:text-slate-200 block truncate">
                                   {it.quantity}x {it.name}
@@ -2752,7 +2759,7 @@ export default function AdminPortal({
 
               return (
                 <div 
-                  key={req.id || `req-${idx}`} 
+                  key={`adm-req-${req.id || ''}-${idx}`} 
                   onClick={() => handleOpenRequest(req)}
                   className="group/card bg-slate-50/50 hover:bg-slate-50 dark:bg-slate-950/40 dark:hover:bg-slate-950/80 border border-slate-100 hover:border-[#e2eae0] dark:border-slate-850 dark:hover:border-slate-800 rounded-2xl p-4 transition-all duration-300 cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-4 relative shadow-3xs"
                 >
@@ -2950,10 +2957,10 @@ export default function AdminPortal({
                       </span>
                       {selectedRequest.characteristics && Object.keys(selectedRequest.characteristics).length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                          {Object.entries(selectedRequest.characteristics).map(([key, val]: [string, any]) => {
+                          {Object.entries(selectedRequest.characteristics).map(([key, val]: [string, any], cIdx: number) => {
                             if (key === "budget") return null; // Already displayed above
                             return (
-                              <div key={key} className="bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-100 dark:border-slate-850 flex justify-between items-center gap-4">
+                              <div key={`req-char-${selectedRequest.id || ''}-${key}-${cIdx}`} className="bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-100 dark:border-slate-850 flex justify-between items-center gap-4">
                                 <span className="font-bold text-slate-500 font-sans text-[11px] truncate">{key}</span>
                                 <span className="font-black text-slate-855 dark:text-slate-100 font-sans text-[11px] shrink-0">{String(val)}</span>
                               </div>
@@ -3159,8 +3166,8 @@ export default function AdminPortal({
                   onChange={(e) => setTargetCustomProductId(e.target.value)}
                   className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 dark:text-white pointer-events-auto"
                 >
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
+                  {products.map((p, idx) => (
+                    <option key={`adm-opt-select-${p.id}-${idx}`} value={p.id}>
                       {p.name}
                     </option>
                   ))}
@@ -3232,10 +3239,10 @@ export default function AdminPortal({
               </div>
 
               <div className="space-y-4 max-h-[460px] overflow-y-auto pr-1">
-                {products.map((p) => {
+                {products.map((p, idx) => {
                   const pOptions = localCustomOptions[p.id] || [];
                   return (
-                    <div key={p.id} className="border border-slate-150 dark:border-slate-800 rounded-2xl p-4 space-y-3 bg-white dark:bg-slate-905">
+                    <div key={`adm-opt-card-${p.id}-${idx}`} className="border border-slate-150 dark:border-slate-800 rounded-2xl p-4 space-y-3 bg-white dark:bg-slate-905">
                       <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                         <span className="text-xs font-extrabold text-[#2d4a22] dark:text-emerald-450 uppercase">{p.name}</span>
                         <span className="text-[9px] font-mono bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-slate-500">
@@ -3248,12 +3255,12 @@ export default function AdminPortal({
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                           {pOptions.map((opt, oIdx) => (
-                            <div key={oIdx} className="bg-slate-50/50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-850 flex justify-between items-start text-[11px] gap-2">
+                            <div key={`popt-${p.id}-${oIdx}`} className="bg-slate-50/50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-850 flex justify-between items-start text-[11px] gap-2">
                               <div className="space-y-1">
                                 <span className="font-bold text-slate-700 dark:text-slate-300">{opt.label}</span>
                                 <div className="flex flex-wrap gap-1">
                                   {opt.values.map((val, vIdx) => (
-                                    <span key={vIdx} className="text-[8px] bg-white dark:bg-slate-900 border border-slate-205 text-slate-500 px-1 py-0.5 rounded truncate max-w-[120px]">
+                                    <span key={`poptval-${p.id}-${oIdx}-${vIdx}`} className="text-[8px] bg-white dark:bg-slate-900 border border-slate-205 text-slate-500 px-1 py-0.5 rounded truncate max-w-[120px]">
                                       {val}
                                     </span>
                                   ))}
@@ -3287,12 +3294,12 @@ export default function AdminPortal({
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                       {(localCustomOptions["custom_special_atelier"] || []).map((opt, oIdx) => (
-                        <div key={oIdx} className="bg-white/85 dark:bg-slate-950 p-3 rounded-xl border border-amber-500/10 flex justify-between items-start text-[11px] gap-2 animate-fadeIn">
+                        <div key={`specopt-${oIdx}`} className="bg-white/85 dark:bg-slate-950 p-3 rounded-xl border border-amber-500/10 flex justify-between items-start text-[11px] gap-2 animate-fadeIn">
                           <div className="space-y-1">
                             <span className="font-bold text-slate-800 dark:text-slate-300">{opt.label}</span>
                             <div className="flex flex-wrap gap-1">
                               {opt.values.map((val, vIdx) => (
-                                <span key={vIdx} className="text-[8px] bg-slate-50 dark:bg-slate-900 border border-slate-150 px-1 py-0.5 rounded text-slate-500">
+                                <span key={`specval-${oIdx}-${vIdx}`} className="text-[8px] bg-slate-50 dark:bg-slate-900 border border-slate-150 px-1 py-0.5 rounded text-slate-500">
                                   {val}
                                 </span>
                               ))}

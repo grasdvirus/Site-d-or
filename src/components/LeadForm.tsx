@@ -26,7 +26,7 @@ export default function LeadForm() {
 
     // Simulate bespoke workbench construction calculation
     setTimeout(() => {
-      let recommendedSetup = "Console nexus. Walnut Studio";
+      let recommendedSetup = "Console Sitedor Walnut Studio";
       let priceQuote = "680€";
       let timeline = "Expédié sous 10 jours (Fait main)";
       let details = [
@@ -37,7 +37,7 @@ export default function LeadForm() {
       ];
 
       if (formData.sizing === "180 x 80 cm (Large Workspace)") {
-        recommendedSetup = "Table nexus. Pro Architect Slate";
+        recommendedSetup = "Table Sitedor Pro Architect Slate";
         priceQuote = "940€";
         timeline = "Expédié sous 14 jours (Usinage précis)";
         details = [
@@ -47,7 +47,7 @@ export default function LeadForm() {
           "Incrustation de patte de cuir pleine fleur sur le tiroir d'angle"
         ];
       } else if (formData.timberType === "Matte Charcoal Oak") {
-        recommendedSetup = "Console nexus. Prestige Oak Dark";
+        recommendedSetup = "Console Sitedor Prestige Oak Dark";
         priceQuote = "820€";
         timeline = "Expédié sous 12 jours (Teinture artisanale)";
         details = [
@@ -208,7 +208,7 @@ export default function LeadForm() {
                   <Sparkles className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold font-sans">Devis de l'Atelier nexus. Woodwork</h3>
+                  <h3 className="text-lg font-bold font-sans">Devis de l'Atelier Sitedor</h3>
                   <p className="text-xs text-slate-400 font-mono">Conçu pour : {formData.userName}</p>
                 </div>
               </div>
@@ -227,7 +227,7 @@ export default function LeadForm() {
                 <h4 className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-2.5">Inclus en fabrication :</h4>
                 <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {proposalResult.details.map((item, idx) => (
-                    <li key={idx} className="flex gap-2.5 text-xs text-slate-300">
+                    <li key={`prop-item-${idx}`} className="flex gap-2.5 text-xs text-slate-300">
                       <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
                       <span>{item}</span>
                     </li>
@@ -261,7 +261,7 @@ export default function LeadForm() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => alert("Votre demande d'atelier sur mesure a été enregistrée ! Un designer de nexus prendra contact par mail sous 24h.")}
+                  onClick={() => alert("Votre demande d'atelier sur mesure a été enregistrée ! Un designer de Sitedor prendra contact par mail sous 24h.")}
                   className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors"
                 >
                   Commander mon Bureau

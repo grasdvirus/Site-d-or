@@ -156,7 +156,7 @@ export const TRANSLATIONS: Record<Language, TranslationDictionary> = {
 
     atelierTitle: "L'Atelier de Personnalisation 3D",
     atelierDesc: "Modifiez l’essence du bois, le revêtement en velours ou ajoutez des options de confort exclusives. Visualisez en temps réel sous tous les angles.",
-    customProductTitle: "Fauteuil Custom Nexus",
+    customProductTitle: "Fauteuil Custom Sitedor",
     woodEssence: "Essence de Bois",
     fabricColor: "Revêtement",
     cushionThickness: "Épaisseur du Coussin",
@@ -281,7 +281,7 @@ export const TRANSLATIONS: Record<Language, TranslationDictionary> = {
 
     atelierTitle: "3D Customization Workshop",
     atelierDesc: "Modify the wood essence, velvet seat color, or add exclusive comfort features. Visualize your creation instantly from all angles.",
-    customProductTitle: "Nexus Custom Armchair",
+    customProductTitle: "Sitedor Custom Armchair",
     woodEssence: "Wood Timber Essence",
     fabricColor: "Fabric Upholstery",
     cushionThickness: "Cushion Padding",
@@ -531,7 +531,7 @@ export const TRANSLATIONS: Record<Language, TranslationDictionary> = {
 
     atelierTitle: "Taller interactivo de personalización 3D",
     atelierDesc: "Configura la madera de ébano, la tapicería de terciopelo premium o añade accesorios ergonómicos exclusivos en tiempo real.",
-    customProductTitle: "Sillón Custom Nexus",
+    customProductTitle: "Sillón Custom Sitedor",
     woodEssence: "Esencia de Madera noble",
     fabricColor: "Tapizado de Terciopelo",
     cushionThickness: "Espesor del Cojín",

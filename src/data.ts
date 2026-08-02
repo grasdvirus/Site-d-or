@@ -1,5 +1,35 @@
 import { Product } from "./types";
 
+export function generateAffiliateCode(seed?: string): string {
+  if (!seed) {
+    seed = "NEXUS_DEFAULT_SEED_PROD";
+  }
+
+  // Pure deterministic hashing algorithm based on seed
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash << 5) - hash + seed.charCodeAt(i);
+    hash |= 0; // Convert to 32bit integer
+  }
+  
+  const absHash = Math.abs(hash);
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  
+  let code = "";
+  let current = absHash;
+  for (let i = 0; i < 6; i++) {
+    const idx = (current + i * 17 + (seed.charCodeAt(i % seed.length) || 0) * 13) % chars.length;
+    code += chars.charAt(idx);
+    current = Math.floor(current / 5) + idx * 7 + i;
+  }
+  
+  // Format 2-letter uppercase prefix from seed (e.g. "OR", "EL", "NX")
+  const cleanSeed = seed.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  const prefix = (cleanSeed.slice(0, 2) + "NX").slice(0, 2);
+  
+  return `${prefix}${code.slice(0, 6)}`;
+}
+
 export const INITIAL_PRODUCTS: Product[] = [
   {
     id: "orris-chair",
@@ -22,7 +52,8 @@ export const INITIAL_PRODUCTS: Product[] = [
       "Structure renforcée garantie 5 ans",
       "Traitement anti-taches protecteur breveté"
     ],
-    stock: 8
+    stock: 8,
+    affiliateCode: "NX892A7K"
   },
   {
     id: "elvo-chair",
@@ -45,7 +76,8 @@ export const INITIAL_PRODUCTS: Product[] = [
       "Coussins de soutien lombaires intégrés",
       "Tissu haute résistance aux frottements"
     ],
-    stock: 5
+    stock: 5,
+    affiliateCode: "EL503P82"
   },
   {
     id: "sienna-lounge",
@@ -68,7 +100,8 @@ export const INITIAL_PRODUCTS: Product[] = [
       "Matériaux légers facilitant le déplacement",
       "Conception monobloc ultra-stable"
     ],
-    stock: 12
+    stock: 12,
+    affiliateCode: "SI550L91"
   },
   {
     id: "mollis-accent",
@@ -91,7 +124,8 @@ export const INITIAL_PRODUCTS: Product[] = [
       "Encombrement optimisé pour petits intérieurs",
       "Montage ultra-rapide en 10 minutes chrono"
     ],
-    stock: 14
+    stock: 14,
+    affiliateCode: "MO320M77"
   },
   {
     id: "kivi-cozy",
@@ -112,7 +146,8 @@ export const INITIAL_PRODUCTS: Product[] = [
       "Base en tissu Oxford ultra-robuste",
       "Poignée de transport en simili-cuir intégrée"
     ],
-    stock: 20
+    stock: 20,
+    affiliateCode: "KI245C68"
   }
 ];
 
