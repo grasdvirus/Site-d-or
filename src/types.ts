@@ -12,6 +12,7 @@ export interface Product {
   features: string[];
   stock: number;
   affiliateCode?: string;
+  isFeatured?: boolean;
 }
 
 export interface CartItem {

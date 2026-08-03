@@ -24,50 +24,66 @@ if (process.env.GEMINI_API_KEY) {
 const app = express();
 const PORT = 3000;
 
-// Ensure uploads directories exist
+// Ensure uploads directories exist safely
 const uploadsDirInPublic = path.join(process.cwd(), "public", "uploads");
 const uploadsDirInDist = path.join(process.cwd(), "dist", "uploads");
 
-if (!fs.existsSync(uploadsDirInPublic)) {
-  fs.mkdirSync(uploadsDirInPublic, { recursive: true });
+try {
+  if (!fs.existsSync(uploadsDirInPublic)) {
+    fs.mkdirSync(uploadsDirInPublic, { recursive: true });
+  }
+} catch (e) {
+  // Ignore filesystem permission errors in serverless environments
 }
-if (!fs.existsSync(uploadsDirInDist)) {
-  fs.mkdirSync(uploadsDirInDist, { recursive: true });
+try {
+  if (!fs.existsSync(uploadsDirInDist)) {
+    fs.mkdirSync(uploadsDirInDist, { recursive: true });
+  }
+} catch (e) {
+  // Ignore filesystem permission errors in serverless environments
 }
 
 function saveBase64Image(base64Str: string, originalName?: string): string {
-  const matches = base64Str.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-  if (!matches || matches.length !== 3) {
-    throw new Error("Format base64 invalide ou corrompu");
-  }
-  const contentType = matches[1];
-  const binaryBuffer = Buffer.from(matches[2], "base64");
-  
-  let extension = "jpg";
-  if (contentType.includes("png")) extension = "png";
-  else if (contentType.includes("webp")) extension = "webp";
-  else if (contentType.includes("gif")) extension = "gif";
-  else if (contentType.includes("jpeg")) extension = "jpg";
-  else if (contentType.includes("svg")) extension = "svg";
-
-  const cleanOriginal = originalName 
-    ? path.parse(originalName).name.toLowerCase().replace(/[^a-z0-9_-]/g, "") 
-    : "upload";
-  const filename = `${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}_${cleanOriginal}.${extension}`;
-
-  // Save to public/uploads
-  const filePathPublic = path.join(uploadsDirInPublic, filename);
-  fs.writeFileSync(filePathPublic, binaryBuffer);
-
-  // Also save to dist/uploads so it is immediately served in production
   try {
-    fs.writeFileSync(path.join(uploadsDirInDist, filename), binaryBuffer);
-  } catch (err) {
-    // Dist might not exist yet during build or dev startup, which is fine
-  }
+    const matches = base64Str.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
+      return base64Str;
+    }
+    const contentType = matches[1];
+    const binaryBuffer = Buffer.from(matches[2], "base64");
+    
+    let extension = "jpg";
+    if (contentType.includes("png")) extension = "png";
+    else if (contentType.includes("webp")) extension = "webp";
+    else if (contentType.includes("gif")) extension = "gif";
+    else if (contentType.includes("jpeg")) extension = "jpg";
+    else if (contentType.includes("svg")) extension = "svg";
 
-  // Return the web resource URL path
-  return `/uploads/${filename}`;
+    const cleanOriginal = originalName 
+      ? path.parse(originalName).name.toLowerCase().replace(/[^a-z0-9_-]/g, "") 
+      : "upload";
+    const filename = `${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}_${cleanOriginal}.${extension}`;
+
+    // Try saving to public/uploads
+    const filePathPublic = path.join(uploadsDirInPublic, filename);
+    fs.writeFileSync(filePathPublic, binaryBuffer);
+
+    // Also save to dist/uploads so it is immediately served in production
+    try {
+      if (fs.existsSync(uploadsDirInDist)) {
+        fs.writeFileSync(path.join(uploadsDirInDist, filename), binaryBuffer);
+      }
+    } catch (err) {
+      // Dist might not exist or be read-only
+    }
+
+    // Return the web resource URL path
+    return `/uploads/${filename}`;
+  } catch (fsErr) {
+    console.warn("Server filesystem is read-only or ephemeral. Returning base64 data URL for direct cloud persistence:", fsErr);
+    // Return base64Str directly so the client can save it to Firestore
+    return base64Str;
+  }
 }
 
 // API routes FIRST
@@ -80,7 +96,11 @@ app.post("/api/upload", express.json({ limit: "50mb" }), (req: express.Request, 
     const fileUrl = saveBase64Image(base64, filename);
     return res.json({ url: fileUrl });
   } catch (error: any) {
-    console.error("Upload error:", error);
+    console.error("Upload error fallback:", error);
+    // Even if an unexpected error occurs, return the base64 as the image URL
+    if (req.body?.base64) {
+      return res.json({ url: req.body.base64 });
+    }
     return res.status(500).json({ error: error.message || "Impossible d'enregistrer l'image" });
   }
 });

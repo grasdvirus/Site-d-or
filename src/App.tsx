@@ -50,6 +50,7 @@ import Pricing from "./components/Pricing";
 import FAQ from "./components/FAQ";
 import AdminPortal from "./components/AdminPortal";
 import ReviewsCarousel from "./components/ReviewsCarousel";
+import { SmartMedia } from "./components/SmartMedia";
 import { INITIAL_PRODUCTS, generateAffiliateCode } from "./data";
 import { Product, CartItem, PromoCode } from "./types";
 import { db, auth, googleProvider, signInWithPopup, signOut, handleFirestoreError, GoogleAuthProvider, OperationType } from "./firebase";
@@ -852,7 +853,7 @@ export default function App() {
   };
 
   const handleSpotlightAddToCart = () => {
-    const spotlightItem = products.find(p => p.id === "sienna-lounge") || products[0];
+    const spotlightItem = products.find(p => p.isFeatured) || products.find(p => p.id === "sienna-lounge") || products[0];
     if (!spotlightItem) return;
 
     const selectedColor = spotlightItem.colors[spotlightColorIdx] || spotlightItem.colors[0];
@@ -1116,8 +1117,8 @@ export default function App() {
     }, 100);
   };
 
-  // Spotlight Product selection reference
-  const spotlightProduct = products.find(p => p.id === "sienna-lounge") || products[0];
+  // Spotlight Product selection reference (prioritizes admin-selected featured product)
+  const spotlightProduct = products.find(p => p.isFeatured) || products.find(p => p.id === "sienna-lounge") || products[0];
 
   const isRTL = lang === "ar";
 
@@ -1613,11 +1614,11 @@ export default function App() {
                     onClick={() => handleOpenProductDetails(p)}
                     className="relative aspect-21/9 rounded-2xl md:rounded-3xl overflow-hidden cursor-pointer group shadow-2xs hover:shadow-md transition-all border border-slate-200/80 dark:border-slate-800 active:scale-[0.99]"
                   >
-                    <img
+                    <SmartMedia
                       src={p.image}
                       alt={p.name}
-                      referrerPolicy="no-referrer"
                       className="w-full h-full object-cover group-hover:scale-108 transition-transform duration-500"
+                      containerClassName="w-full h-full"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/10 group-hover:from-black/95 transition-opacity" />
                     <div className="absolute inset-0 flex flex-col justify-end p-3.5 md:p-4 text-left">
@@ -2337,11 +2338,11 @@ export default function App() {
 
                     {/* Image visual slider */}
                     <div className="h-48 rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-950 relative group/hero">
-                      <img 
+                      <SmartMedia 
                         src={spotlightProduct.image} 
                         alt={spotlightProduct.name}
-                        referrerPolicy="no-referrer"
                         className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover/hero:scale-105" 
+                        containerClassName="w-full h-full"
                       />
                       <div className="absolute inset-0 bg-linear-to-t from-slate-950/40 via-transparent to-transparent"></div>
                       <div className="absolute bottom-3 left-3 text-xs text-white font-mono font-semibold">
@@ -2477,7 +2478,7 @@ export default function App() {
 
               {/* Grid with category filters and instant Search */}
               <Pricing 
-                products={products.length > 5 ? products.slice(0, 5) : products} 
+                products={products} 
                 onAddToCart={handleAddToCart} 
                 lang={lang} 
                 currency={currency} 
@@ -3111,11 +3112,10 @@ export default function App() {
                           key={`cart-item-${item.product.id}-${idx}`} 
                           className="flex items-center justify-between p-3 rounded-xl bg-[#fbfdfa] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 gap-3 text-left"
                         >
-                          <img 
+                          <SmartMedia 
                             src={item.product.image} 
                             alt={item.product.name}
-                            referrerPolicy="no-referrer"
-                            className="w-12 h-12 rounded-lg object-cover flex-shrink-0" 
+                            containerClassName="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0" 
                           />
                           <div className="flex-1 min-w-0">
                             <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">{item.product.name}</h4>
@@ -3968,11 +3968,11 @@ export default function App() {
                 
                 <div className="lg:col-span-6 bg-slate-50 dark:bg-slate-950 p-6 md:p-8 flex flex-col justify-between relative border-b lg:border-b-0 lg:border-r border-slate-200/60 dark:border-slate-800">
                   <div className="relative rounded-3xl overflow-hidden shadow-md h-80 md:h-[420px] w-full bg-slate-200 dark:bg-slate-900">
-                    <img
+                    <SmartMedia
                       src={selectedAffiliateProduct.image}
                       alt={selectedAffiliateProduct.name}
-                      referrerPolicy="no-referrer"
                       className="w-full h-full object-cover"
+                      containerClassName="w-full h-full"
                     />
                     
                     <div className="absolute top-4 left-4 bg-slate-900/80 backdrop-blur-md text-white font-mono text-[10px] font-bold px-3 py-1 rounded-full uppercase">

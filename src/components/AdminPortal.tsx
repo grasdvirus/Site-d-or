@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Lock, Unlock, Plus, Trash2, Edit2, Check, X, Tag, Layers, Coins, ChevronDown, ChevronUp, Image as ImageIcon, Sliders, CheckCircle2, AlertTriangle, Hammer, ShieldCheck, Box, UserCheck, Settings, HelpCircle, FileText, Globe, Mail, Send, Inbox, RefreshCw, BarChart3, TrendingUp } from "lucide-react";
+import { Lock, Unlock, Plus, Trash2, Edit2, Check, X, Tag, Layers, Coins, ChevronDown, ChevronUp, Image as ImageIcon, Sliders, CheckCircle2, AlertTriangle, Hammer, ShieldCheck, Box, UserCheck, Settings, HelpCircle, FileText, Globe, Mail, Send, Inbox, RefreshCw, BarChart3, TrendingUp, Star } from "lucide-react";
 import { Product, PromoCode } from "../types";
 import { generateAffiliateCode } from "../data";
 import { db } from "../firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { formatPrice, formatOrderTotal, formatBespokePrice } from "../translations";
 import AnalyticsD3Dashboard from "./AnalyticsD3Dashboard";
+import { SmartMedia } from "./SmartMedia";
 
 interface AdminPortalProps {
   products: Product[];
@@ -610,12 +611,50 @@ export default function AdminPortal({
     setFeaturesList(featuresList.filter((_, i) => i !== idx));
   };
 
+  // Helper to compress uploaded images for reliable fast loading and cloud persistence
+  const compressImageIfNeeded = (dataUrl: string, maxWidth = 1000, maxHeight = 1000, quality = 0.82): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.src = dataUrl;
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth || height > maxHeight) {
+          if (width > height) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          } else {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        } else if (dataUrl.length < 300000) {
+          return resolve(dataUrl);
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL("image/jpeg", quality);
+          resolve(compressed);
+        } else {
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl);
+    });
+  };
+
   // Local image handlers
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        alert("La taille de l'image ne doit pas dépasser 2 Mo pour un stockage optimal.");
+      if (file.size > 8 * 1024 * 1024) {
+        alert("La taille du fichier ne doit pas dépasser 8 Mo.");
         return;
       }
       const reader = new FileReader();
@@ -623,23 +662,31 @@ export default function AdminPortal({
         if (typeof reader.result === "string") {
           setIsUploadingImage(true);
           try {
-            const res = await fetch("/api/upload", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                base64: reader.result,
-                filename: file.name
-              })
-            });
-            const data = await res.json();
-            if (data.url) {
-              setImage(data.url);
-            } else {
-              alert("Erreur de téléversement : " + (data.error || "Inconnu"));
+            const compressed = await compressImageIfNeeded(reader.result);
+            try {
+              const res = await fetch("/api/upload", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  base64: compressed,
+                  filename: file.name
+                })
+              });
+              const data = await res.json();
+              if (data.url) {
+                setImage(data.url);
+              } else {
+                // Fallback to compressed base64 if server upload endpoint returned error
+                setImage(compressed);
+              }
+            } catch (netErr) {
+              // Serverless / Cloud Run network fallback
+              console.warn("Upload API unavailable, using resilient base64 fallback:", netErr);
+              setImage(compressed);
             }
           } catch (err: any) {
-            console.error("Upload error:", err);
-            alert("Erreur de connexion au serveur de téléversement d'images.");
+            console.error("Image processing error:", err);
+            setImage(reader.result);
           } finally {
             setIsUploadingImage(false);
           }
@@ -667,8 +714,8 @@ export default function AdminPortal({
         alert("Seuls les fichiers d'image sont acceptés.");
         return;
       }
-      if (file.size > 2 * 1024 * 1024) {
-        alert("La taille de l'image ne doit pas dépasser 2 Mo pour un stockage optimal.");
+      if (file.size > 8 * 1024 * 1024) {
+        alert("La taille du fichier ne doit pas dépasser 8 Mo.");
         return;
       }
       const reader = new FileReader();
@@ -676,23 +723,29 @@ export default function AdminPortal({
         if (typeof reader.result === "string") {
           setIsUploadingImage(true);
           try {
-            const res = await fetch("/api/upload", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                base64: reader.result,
-                filename: file.name
-              })
-            });
-            const data = await res.json();
-            if (data.url) {
-              setImage(data.url);
-            } else {
-              alert("Erreur de téléversement : " + (data.error || "Inconnu"));
+            const compressed = await compressImageIfNeeded(reader.result);
+            try {
+              const res = await fetch("/api/upload", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  base64: compressed,
+                  filename: file.name
+                })
+              });
+              const data = await res.json();
+              if (data.url) {
+                setImage(data.url);
+              } else {
+                setImage(compressed);
+              }
+            } catch (netErr) {
+              console.warn("Upload API unavailable, using resilient base64 fallback:", netErr);
+              setImage(compressed);
             }
           } catch (err: any) {
-            console.error("Upload error:", err);
-            alert("Erreur de connexion au serveur de téléversement d'images.");
+            console.error("Image processing error:", err);
+            setImage(reader.result);
           } finally {
             setIsUploadingImage(false);
           }
@@ -1317,16 +1370,26 @@ export default function AdminPortal({
                 />
               </div>
 
-              {/* Image URL */}
+              {/* Image / Video / Pinterest URL */}
               <div className="space-y-1.5 md:col-span-2">
-                <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Adresse URL de la photo</label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">
+                    Lien Média externe (Pinterest, Photo, Vidéo MP4...)
+                  </label>
+                  <span className="text-[9px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md font-bold">
+                    Pinterest, MP4, Unsplash, Web
+                  </span>
+                </div>
                 <input 
                   type="url" 
-                  placeholder="ex: https://images.unsplash.com/photo-..." 
+                  placeholder="ex: https://pinterest.com/pin/123456... ou https://i.pinimg.com/...jpg" 
                   value={image}
                   onChange={(e) => setImage(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-100 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
                 />
+                <p className="text-[10px] text-slate-400">
+                  💡 <strong>Astuce Pinterest & Vidéos :</strong> Vous pouvez coller directement un lien Pinterest (ex: <code className="text-slate-600 bg-slate-100 px-1 rounded">pinterest.com/pin/...</code>), une image <code className="text-slate-600 bg-slate-100 px-1 rounded">i.pinimg.com</code>, ou une vidéo MP4. Le site l'affichera automatiquement !
+                </p>
               </div>
 
               {/* Local Image Drag & Drop Frame */}
@@ -1359,16 +1422,15 @@ export default function AdminPortal({
                     </div>
                   ) : image ? (
                     <div className="flex flex-col items-center space-y-2 pointer-events-none">
-                      <div className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-200 shadow-2xs">
-                        <img 
+                      <div className="w-24 h-24 rounded-2xl overflow-hidden border border-slate-200 shadow-md">
+                        <SmartMedia 
                           src={image} 
                           alt="Prévisualisation" 
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover"
+                          containerClassName="w-full h-full"
                         />
                       </div>
                       <p className="text-[10px] font-semibold text-[#2d4a22] font-mono">
-                        {image.startsWith("/uploads/") ? "Photo stockée avec succès sur le serveur" : "Image chargée avec succès"}
+                        {image.startsWith("/uploads/") ? "Photo stockée avec succès sur le serveur" : "Média prêt à être publié"}
                       </p>
                       <button
                         type="button"
@@ -1592,17 +1654,21 @@ export default function AdminPortal({
                   className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50/50 border border-slate-101/80 hover:bg-white transition-all space-x-3 group"
                 >
                   <div className="flex items-center space-x-3 min-w-0">
-                    <img 
-                      src={p.image} 
+                    <SmartMedia
+                      src={p.image}
                       alt={p.name}
-                      referrerPolicy="no-referrer"
-                      className="w-12 h-12 rounded-xl object-cover border border-slate-200" 
-                      onError={(e) => {
-                        (e.target as HTMLElement).style.display = 'none';
-                      }}
+                      containerClassName="w-12 h-12 rounded-xl border border-slate-200 overflow-hidden flex-shrink-0"
                     />
                     <div className="min-w-0">
-                      <h4 className="text-xs font-bold text-slate-800 truncate">{p.name}</h4>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h4 className="text-xs font-bold text-slate-800 truncate">{p.name}</h4>
+                        {p.isFeatured && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[9px] font-bold border border-amber-300 dark:border-amber-700">
+                            <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-500" />
+                            En vedette
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
                         <span>{formatPrice(p.price, "CFA")}</span>
                         <span>&bull;</span>
@@ -1655,6 +1721,31 @@ export default function AdminPortal({
                       </div>
                     ) : (
                       <>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!onUpdateProduct) return;
+                            const newIsFeatured = !p.isFeatured;
+                            // If marking as featured, unset other products so there is a primary featured product
+                            if (newIsFeatured) {
+                              for (const otherProd of products) {
+                                if (otherProd.id !== p.id && otherProd.isFeatured) {
+                                  await onUpdateProduct({ ...otherProd, isFeatured: false });
+                                }
+                              }
+                            }
+                            await onUpdateProduct({ ...p, isFeatured: newIsFeatured });
+                          }}
+                          className={`p-2.5 rounded-xl transition-all flex items-center justify-center min-w-[40px] h-[40px] cursor-pointer ${
+                            p.isFeatured 
+                              ? "bg-amber-100 hover:bg-amber-200 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400 border border-amber-300 dark:border-amber-700 shadow-xs" 
+                              : "bg-slate-100 hover:bg-amber-50 text-slate-400 hover:text-amber-500 dark:bg-slate-800 dark:hover:bg-amber-950/20"
+                          }`}
+                          title={p.isFeatured ? "Produit en vedette (Cliquer pour retirer)" : "Définir comme produit en vedette sur l'accueil"}
+                        >
+                          <Star className={`w-4 h-4 ${p.isFeatured ? "fill-amber-400 text-amber-500" : ""}`} />
+                        </button>
+
                         <button
                           type="button"
                           onClick={() => handleStartEditProduct(p)}

@@ -3,6 +3,7 @@ import { Check, ShoppingBag, Heart, Search, Star, Archive } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Product } from "../types";
 import { TRANSLATIONS, Language, Currency, formatPrice } from "../translations";
+import { SmartMedia } from "./SmartMedia";
 
 interface PricingProps {
   products: Product[];
@@ -20,8 +21,26 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Tous");
   
-  // Favorites tracking
-  const [favorites, setFavorites] = useState<Record<string, boolean>>({});
+  // Persistent Favorites tracking via localStorage
+  const [favorites, setFavorites] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem("user_liked_products");
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+
+  // Randomized / Shuffled products array on component mount / page refresh
+  const displayProducts = useMemo(() => {
+    if (!products || products.length === 0) return [];
+    const arr = [...products];
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }, [products]);
   
   // Adding animation feedback state
   const [addedProductIds, setAddedProductIds] = useState<Record<string, boolean>>({});
@@ -36,10 +55,15 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
     setTimeout(() => setCopiedCodeId(null), 2000);
   };
 
-  // Categories list matching reference image (internal keys represent pristine filter tokens)
+  // Categories list matching reference image
   const categoriesList = useMemo(() => {
     return Array.from(new Set(["Tous", ...(categories || ["Lounge", "Office", "Dining", "Rocking"])]));
   }, [categories]);
+
+  // Count of liked items
+  const likedCount = useMemo(() => {
+    return Object.keys(favorites).filter(id => favorites[id]).length;
+  }, [favorites]);
 
   // Helper translation mapping for categories
   const getCategoryLabel = (cat: string) => {
@@ -49,6 +73,7 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
       case "Office": return t.catOffice || "Office";
       case "Dining": return t.catDining || "Dining";
       case "Rocking": return t.catRocking || "Rocking";
+      case "Likes": return lang === "en" ? `Likes (${likedCount})` : lang === "es" ? `Favoritos (${likedCount})` : lang === "ar" ? `المفضلة (${likedCount})` : `Likes (${likedCount})`;
       default: return cat;
     }
   };
@@ -57,11 +82,19 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
   const normalizeStr = (str: string = "") =>
     str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
-  // Filter products by category and query
+  // Filter products by category, Likes, and query
   const filteredProducts = useMemo(() => {
     const q = normalizeStr(searchQuery);
-    return products.filter((product) => {
-      const matchesCategory = selectedCategory === "Tous" || product.category === selectedCategory;
+    return displayProducts.filter((product) => {
+      let matchesCategory = false;
+      if (selectedCategory === "Likes") {
+        matchesCategory = !!favorites[product.id];
+      } else if (selectedCategory === "Tous") {
+        matchesCategory = true;
+      } else {
+        matchesCategory = product.category === selectedCategory;
+      }
+
       if (!q) return matchesCategory;
       
       const matchesSearch =
@@ -74,7 +107,7 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
 
       return matchesCategory && matchesSearch;
     });
-  }, [products, selectedCategory, searchQuery]);
+  }, [displayProducts, selectedCategory, searchQuery, favorites]);
 
   // Handle adding
   const handleAddToCart = (product: Product) => {
@@ -91,7 +124,15 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
 
   const toggleFavorite = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setFavorites(prev => ({ ...prev, [id]: !prev[id] }));
+    setFavorites(prev => {
+      const updated = { ...prev, [id]: !prev[id] };
+      try {
+        localStorage.setItem("user_liked_products", JSON.stringify(updated));
+      } catch (err) {
+        console.warn("Unable to save favorites to localStorage:", err);
+      }
+      return updated;
+    });
   };
 
   // Simulating random discounts for retail visual flair
@@ -116,7 +157,7 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
       {/* Categories Bar */}
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-center gap-4 bg-[#f4f8f3] dark:bg-slate-900/60 p-4.5 rounded-3xl border border-[#e6eee3] dark:border-slate-800 max-w-2xl mx-auto">
         {/* Categories Pills list */}
-        <div className="flex flex-wrap gap-2 justify-center py-1">
+        <div className="flex flex-wrap gap-2 justify-center py-1 items-center">
           {categoriesList.map((cat, idx) => (
             <button
               key={`price-cat-${cat}-${idx}`}
@@ -131,6 +172,21 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
               {getCategoryLabel(cat)}
             </button>
           ))}
+
+          {/* Likes Filter Button - Distinctive Rose / Pink Theme */}
+          <button
+            type="button"
+            onClick={() => setSelectedCategory("Likes")}
+            className={`px-4.5 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer whitespace-nowrap select-none flex items-center gap-1.5 ${
+              selectedCategory === "Likes"
+                ? "bg-gradient-to-r from-rose-500 via-pink-600 to-rose-600 text-white shadow-md ring-2 ring-rose-300 dark:ring-rose-800 scale-105"
+                : "bg-rose-50 dark:bg-rose-950/60 border border-rose-200/90 dark:border-rose-800 text-rose-600 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/80 shadow-2xs"
+            }`}
+            title="Afficher vos articles coup de cœur"
+          >
+            <Heart className={`w-3.5 h-3.5 ${selectedCategory === "Likes" || likedCount > 0 ? "fill-rose-500 text-rose-500" : "text-rose-500"}`} />
+            <span>{getCategoryLabel("Likes")}</span>
+          </button>
         </div>
       </div>
 
@@ -181,14 +237,11 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                 </button>
 
                 {/* Main Product graphic */}
-                <img
+                <SmartMedia
                   src={product.image}
                   alt={product.name}
-                  referrerPolicy="no-referrer"
                   className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover/card:scale-105"
-                  onError={(e) => {
-                    (e.target as HTMLElement).style.display = 'none';
-                  }}
+                  containerClassName="w-full h-full"
                 />
 
                 {/* Stock Tag Overlay */}
@@ -374,10 +427,37 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
         })}
 
         {filteredProducts.length === 0 && (
-          <div className="col-span-full text-center py-16 space-y-3 bg-[#fbfdfa] dark:bg-slate-900 rounded-[1.8rem] border border-[#e6eee3] dark:border-slate-800">
-            <Archive className="w-8 h-8 text-slate-400 mx-auto" />
-            <h4 className="text-xs font-bold text-slate-600 dark:text-slate-350">{emptyFilterMsg}</h4>
-            <p className="text-[10px] text-slate-400 max-w-xs mx-auto">{emptyFilterSub}</p>
+          <div className="col-span-full text-center py-16 px-4 space-y-3 bg-[#fbfdfa] dark:bg-slate-900 rounded-[1.8rem] border border-[#e6eee3] dark:border-slate-800">
+            {selectedCategory === "Likes" ? (
+              <div className="space-y-3">
+                <Heart className="w-10 h-10 text-rose-500 fill-rose-100 dark:fill-rose-950/60 mx-auto animate-bounce" />
+                <h4 className="text-sm font-extrabold text-slate-800 dark:text-slate-200">
+                  {lang === "en" ? "No favorite items yet!" : lang === "es" ? "¡Aún no hay favoritos!" : lang === "ar" ? "لا توجد عناصر مفضلة بعد!" : "Aucun coup de cœur pour le moment !"}
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto leading-relaxed">
+                  {lang === "en" 
+                    ? "Click the heart icon on any product in the catalog to save it to your likes filter." 
+                    : lang === "es"
+                    ? "Haga clic en el icono de corazón en cualquier producto para guardarlo aquí."
+                    : lang === "ar"
+                    ? "انقر على رمز القلب في أي منتج لإضافته إلى قائمتك المفضلة."
+                    : "Cliquez sur le petit cœur d'un produit dans le catalogue pour le mettre en favori et le retrouver ici !"}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setSelectedCategory("Tous")}
+                  className="mt-2 inline-flex items-center gap-2 px-4 py-2.5 bg-[#2d4a22] text-white text-xs font-bold rounded-xl shadow-xs hover:bg-[#1f3418] transition-colors cursor-pointer"
+                >
+                  {lang === "en" ? "Explore Catalog" : "Voir tous les articles"}
+                </button>
+              </div>
+            ) : (
+              <>
+                <Archive className="w-8 h-8 text-slate-400 mx-auto" />
+                <h4 className="text-xs font-bold text-slate-600 dark:text-slate-350">{emptyFilterMsg}</h4>
+                <p className="text-[10px] text-slate-400 max-w-xs mx-auto">{emptyFilterSub}</p>
+              </>
+            )}
           </div>
         )}
       </div>
