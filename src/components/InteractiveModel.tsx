@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { triggerOrderCelebration } from "../utils/confetti";
 import { SmartMedia } from "./SmartMedia";
+import { ProductMediaGallery } from "./ProductMediaGallery";
 import { 
   motion, 
   AnimatePresence 
@@ -1068,8 +1069,9 @@ export default function InteractiveModel({
 
                     {/* Exact matched product card */}
                     <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-emerald-200/40 flex gap-3.5 items-center">
-                      <SmartMedia 
-                        src={matchedCatalogProduct.image} 
+                      <ProductMediaGallery 
+                        image={matchedCatalogProduct.image}
+                        image2={matchedCatalogProduct.image2} 
                         alt={matchedCatalogProduct.name}
                         containerClassName="w-14 h-14 rounded-lg overflow-hidden bg-slate-50 border border-slate-100 shrink-0"
                       />

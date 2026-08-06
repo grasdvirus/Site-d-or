@@ -50,7 +50,9 @@ import Pricing from "./components/Pricing";
 import FAQ from "./components/FAQ";
 import AdminPortal from "./components/AdminPortal";
 import ReviewsCarousel from "./components/ReviewsCarousel";
+import AssistiveTouchWidget from "./components/AssistiveTouchWidget";
 import { SmartMedia } from "./components/SmartMedia";
+import { ProductMediaGallery } from "./components/ProductMediaGallery";
 import { INITIAL_PRODUCTS, generateAffiliateCode } from "./data";
 import { Product, CartItem, PromoCode } from "./types";
 import { db, auth, googleProvider, signInWithPopup, signOut, handleFirestoreError, GoogleAuthProvider, OperationType } from "./firebase";
@@ -1614,8 +1616,9 @@ export default function App() {
                     onClick={() => handleOpenProductDetails(p)}
                     className="relative aspect-21/9 rounded-2xl md:rounded-3xl overflow-hidden cursor-pointer group shadow-2xs hover:shadow-md transition-all border border-slate-200/80 dark:border-slate-800 active:scale-[0.99]"
                   >
-                    <SmartMedia
-                      src={p.image}
+                    <ProductMediaGallery
+                      image={p.image}
+                      image2={p.image2}
                       alt={p.name}
                       className="w-full h-full object-cover group-hover:scale-108 transition-transform duration-500"
                       containerClassName="w-full h-full"
@@ -2338,8 +2341,9 @@ export default function App() {
 
                     {/* Image visual slider */}
                     <div className="h-48 rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-950 relative group/hero">
-                      <SmartMedia 
-                        src={spotlightProduct.image} 
+                      <ProductMediaGallery 
+                        image={spotlightProduct.image} 
+                        image2={spotlightProduct.image2}
                         alt={spotlightProduct.name}
                         className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover/hero:scale-105" 
                         containerClassName="w-full h-full"
@@ -3968,8 +3972,9 @@ export default function App() {
                 
                 <div className="lg:col-span-6 bg-slate-50 dark:bg-slate-950 p-6 md:p-8 flex flex-col justify-between relative border-b lg:border-b-0 lg:border-r border-slate-200/60 dark:border-slate-800">
                   <div className="relative rounded-3xl overflow-hidden shadow-md h-80 md:h-[420px] w-full bg-slate-200 dark:bg-slate-900">
-                    <SmartMedia
-                      src={selectedAffiliateProduct.image}
+                    <ProductMediaGallery
+                      image={selectedAffiliateProduct.image}
+                      image2={selectedAffiliateProduct.image2}
                       alt={selectedAffiliateProduct.name}
                       className="w-full h-full object-cover"
                       containerClassName="w-full h-full"
@@ -4246,6 +4251,31 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Assistive Touch Quick-Action Floating Widget (iOS style with vertical drag) */}
+        <AssistiveTouchWidget 
+          isAdmin={user?.email === "grasdvirus@gmail.com"}
+          onOpenAdmin={() => setActiveTab("admin")} 
+          onRefreshSite={() => {
+            window.location.reload();
+          }}
+          onApplyPromoCode={(code) => {
+            const found = promoCodes.find(p => p.code.toUpperCase() === code.toUpperCase() && p.status === "active");
+            if (found) {
+              setActiveDiscount(found.discount);
+              setAppliedCodeName(found.code);
+              return true;
+            }
+            return false;
+          }}
+          onSearchProduct={(query) => {
+            setActiveTab("catalog");
+            setAffiliateSearchCode(query);
+          }}
+          adminEmail="devcristan3@gmail.com"
+          adminPhone="+225 07 04 54 29 09"
+          userGoogleEmail="grasdvirus@gmail.com"
+        />
 
     </div>
   );

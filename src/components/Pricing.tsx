@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { Product } from "../types";
 import { TRANSLATIONS, Language, Currency, formatPrice } from "../translations";
 import { SmartMedia } from "./SmartMedia";
+import { ProductMediaGallery } from "./ProductMediaGallery";
 
 interface PricingProps {
   products: Product[];
@@ -236,9 +237,10 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                   <Heart className={`w-3.5 h-3.5 ${isFav ? "fill-rose-500" : ""}`} />
                 </button>
 
-                {/* Main Product graphic */}
-                <SmartMedia
-                  src={product.image}
+                {/* Main Product graphic / Dual Image Slideshow */}
+                <ProductMediaGallery
+                  image={product.image}
+                  image2={product.image2}
                   alt={product.name}
                   className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover/card:scale-105"
                   containerClassName="w-full h-full"

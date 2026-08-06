@@ -70,6 +70,9 @@ export default function AdminPortal({
   const [stock, setStock] = useState("");
   const [category, setCategory] = useState("");
   const [image, setImage] = useState("");
+  const [image2, setImage2] = useState("");
+  const [image2Dragging, setImage2Dragging] = useState(false);
+  const [isUploadingImage2, setIsUploadingImage2] = useState(false);
   
   // Interactive additions: Colors
   const [colorName, setColorName] = useState("");
@@ -103,6 +106,7 @@ export default function AdminPortal({
     setStock(String(p.stock || 5));
     setCategory(p.category);
     setImage(p.image);
+    setImage2(p.image2 || "");
     setColorsList(p.colors || []);
     setVariantsLabel(p.variantsLabel || "Taille");
     setVariantsList(p.variants || []);
@@ -123,6 +127,7 @@ export default function AdminPortal({
     setStock("");
     setCategory(categories[0] || "");
     setImage("");
+    setImage2("");
     setColorsList([
       { name: "Vert Signature", hex: "#2d4a22" },
       { name: "Orange Terre Cuite", hex: "#c2410c" }
@@ -663,27 +668,7 @@ export default function AdminPortal({
           setIsUploadingImage(true);
           try {
             const compressed = await compressImageIfNeeded(reader.result);
-            try {
-              const res = await fetch("/api/upload", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  base64: compressed,
-                  filename: file.name
-                })
-              });
-              const data = await res.json();
-              if (data.url) {
-                setImage(data.url);
-              } else {
-                // Fallback to compressed base64 if server upload endpoint returned error
-                setImage(compressed);
-              }
-            } catch (netErr) {
-              // Serverless / Cloud Run network fallback
-              console.warn("Upload API unavailable, using resilient base64 fallback:", netErr);
-              setImage(compressed);
-            }
+            setImage(compressed);
           } catch (err: any) {
             console.error("Image processing error:", err);
             setImage(reader.result);
@@ -724,30 +709,74 @@ export default function AdminPortal({
           setIsUploadingImage(true);
           try {
             const compressed = await compressImageIfNeeded(reader.result);
-            try {
-              const res = await fetch("/api/upload", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  base64: compressed,
-                  filename: file.name
-                })
-              });
-              const data = await res.json();
-              if (data.url) {
-                setImage(data.url);
-              } else {
-                setImage(compressed);
-              }
-            } catch (netErr) {
-              console.warn("Upload API unavailable, using resilient base64 fallback:", netErr);
-              setImage(compressed);
-            }
+            setImage(compressed);
           } catch (err: any) {
             console.error("Image processing error:", err);
             setImage(reader.result);
           } finally {
             setIsUploadingImage(false);
+          }
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Image 2 upload handlers
+  const handleImage2Upload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 8 * 1024 * 1024) {
+        alert("La taille du fichier ne doit pas dépasser 8 Mo.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        if (typeof reader.result === "string") {
+          setIsUploadingImage2(true);
+          try {
+            const compressed = await compressImageIfNeeded(reader.result);
+            setImage2(compressed);
+          } catch (err: any) {
+            setImage2(reader.result);
+          } finally {
+            setIsUploadingImage2(false);
+          }
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleDragOver2 = (e: React.DragEvent) => {
+    e.preventDefault();
+    setImage2Dragging(true);
+  };
+
+  const handleDragLeave2 = () => {
+    setImage2Dragging(false);
+  };
+
+  const handleDrop2 = (e: React.DragEvent) => {
+    e.preventDefault();
+    setImage2Dragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      if (!file.type.startsWith("image/")) {
+        alert("Seuls les fichiers d'image sont acceptés.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        if (typeof reader.result === "string") {
+          setIsUploadingImage2(true);
+          try {
+            const compressed = await compressImageIfNeeded(reader.result);
+            setImage2(compressed);
+          } catch (err: any) {
+            setImage2(reader.result);
+          } finally {
+            setIsUploadingImage2(false);
           }
         }
       };
@@ -776,6 +805,7 @@ export default function AdminPortal({
       ];
 
       const finalImage = image.trim() || defaultImages[Math.floor(Math.random() * defaultImages.length)];
+      const finalImage2 = image2.trim() || undefined;
 
       if (editingProduct) {
         // Edit mode
@@ -786,6 +816,7 @@ export default function AdminPortal({
           description: description.trim() || "Aucune description fournie.",
           price: priceNum,
           image: finalImage,
+          image2: finalImage2,
           category: category,
           colors: colorsList.length > 0 ? colorsList : [{ name: "Noir mat", hex: "#000000" }],
           variantsLabel: variantsLabel.trim() || undefined,
@@ -814,6 +845,7 @@ export default function AdminPortal({
           description: description.trim() || "Aucune description fournie.",
           price: priceNum,
           image: finalImage,
+          image2: finalImage2,
           category: category,
           colors: colorsList.length > 0 ? colorsList : [{ name: "Noir mat", hex: "#000000" }],
           variantsLabel: variantsLabel.trim() || undefined,
@@ -834,6 +866,7 @@ export default function AdminPortal({
       setPrice("");
       setStock("");
       setImage("");
+      setImage2("");
       setColorsList([
         { name: "Vert Signature", hex: "#2d4a22" },
         { name: "Orange Terre Cuite", hex: "#c2410c" }
@@ -1305,36 +1338,36 @@ export default function AdminPortal({
               
               {/* Product title */}
               <div className="space-y-1.5">
-                <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Nom du meuble</label>
+                <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Nom du meuble</label>
                 <input 
                   type="text" 
                   required
                   placeholder="ex : Chaise Scandinave Héra" 
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-100 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white dark:placeholder-slate-400 focus:border-[#2d4a22] dark:focus:border-emerald-500 focus:bg-white dark:focus:bg-slate-800 rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
                 />
               </div>
 
               {/* Tagline */}
               <div className="space-y-1.5">
-                <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Slogan / Accroche</label>
+                <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Slogan / Accroche</label>
                 <input 
                   type="text" 
                   placeholder="ex : Bois de chêne & assise bouclée" 
                   value={tagline}
                   onChange={(e) => setTagline(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-101 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white dark:placeholder-slate-400 focus:border-[#2d4a22] dark:focus:border-emerald-500 focus:bg-white dark:focus:bg-slate-800 rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
                 />
               </div>
 
               {/* Category selector */}
               <div className="space-y-1.5">
-                <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Famille de meuble</label>
+                <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Famille de meuble</label>
                 <select 
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-100 text-xs rounded-xl px-3.5 py-2.5 text-slate-700 outline-none cursor-pointer focus:bg-white focus:border-[#2d4a22]"
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-xs rounded-xl px-3.5 py-2.5 outline-none cursor-pointer focus:bg-white dark:focus:bg-slate-800 focus:border-[#2d4a22] dark:focus:border-emerald-500"
                 >
                   {categories.map((cat, idx) => (
                     <option key={`adm-cat-opt-${cat}-${idx}`} value={cat}>{cat}</option>
@@ -1344,7 +1377,7 @@ export default function AdminPortal({
 
               {/* Price */}
               <div className="space-y-1.5">
-                <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Tarif unit. (F CFA)</label>
+                <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Tarif unit. (F CFA)</label>
                 <input 
                   type="number" 
                   required
@@ -1352,13 +1385,13 @@ export default function AdminPortal({
                   placeholder="ex : 150000" 
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-100 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white dark:placeholder-slate-400 focus:border-[#2d4a22] dark:focus:border-emerald-500 focus:bg-white dark:focus:bg-slate-800 rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
                 />
               </div>
 
               {/* Stock */}
-              <div className="space-y-1.5">
-                <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Quantité en Stock</label>
+              <div className="space-y-1.5 md:col-span-2">
+                <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Quantité en Stock</label>
                 <input 
                   type="number" 
                   required
@@ -1366,17 +1399,17 @@ export default function AdminPortal({
                   placeholder="ex : 15" 
                   value={stock}
                   onChange={(e) => setStock(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-101 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white dark:placeholder-slate-400 focus:border-[#2d4a22] dark:focus:border-emerald-500 focus:bg-white dark:focus:bg-slate-800 rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
                 />
               </div>
 
-              {/* Image / Video / Pinterest URL */}
-              <div className="space-y-1.5 md:col-span-2">
+              {/* IMAGE 1 - Main Image */}
+              <div className="space-y-1.5 md:col-span-2 p-4 bg-slate-50/60 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
                 <div className="flex items-center justify-between">
-                  <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">
-                    Lien Média externe (Pinterest, Photo, Vidéo MP4...)
+                  <label className="block text-xs font-mono font-bold uppercase tracking-wider text-[#2d4a22] dark:text-emerald-400">
+                    🖼️ Image Principale (Image 1)
                   </label>
-                  <span className="text-[9px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md font-bold">
+                  <span className="text-[9px] font-mono text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/80 px-2 py-0.5 rounded-md font-bold">
                     Pinterest, MP4, Unsplash, Web
                   </span>
                 </div>
@@ -1385,26 +1418,20 @@ export default function AdminPortal({
                   placeholder="ex: https://pinterest.com/pin/123456... ou https://i.pinimg.com/...jpg" 
                   value={image}
                   onChange={(e) => setImage(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-100 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white dark:placeholder-slate-400 focus:border-[#2d4a22] rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
                 />
-                <p className="text-[10px] text-slate-400">
-                  💡 <strong>Astuce Pinterest & Vidéos :</strong> Vous pouvez coller directement un lien Pinterest (ex: <code className="text-slate-600 bg-slate-100 px-1 rounded">pinterest.com/pin/...</code>), une image <code className="text-slate-600 bg-slate-100 px-1 rounded">i.pinimg.com</code>, ou une vidéo MP4. Le site l'affichera automatiquement !
-                </p>
-              </div>
-
-              {/* Local Image Drag & Drop Frame */}
-              <div className="space-y-1.5 md:col-span-2">
-                <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Ou téléverser une photo locale</label>
+                
+                {/* Local Image 1 File Upload */}
                 <div
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
-                  className={`border-2 border-dashed rounded-2xl p-5 text-center transition-all cursor-pointer flex flex-col items-center justify-center relative min-h-[140px] ${
+                  className={`border-2 border-dashed rounded-xl p-3 text-center transition-all cursor-pointer relative min-h-[100px] flex flex-col items-center justify-center ${
                     imageDragging
                       ? "border-[#2d4a22] bg-[#2d4a22]/5"
                       : image
-                      ? "border-slate-300 bg-slate-50/55"
-                      : "border-slate-200 bg-slate-50/20 hover:bg-slate-50/80 hover:border-[#2d4a22]"
+                      ? "border-slate-300 dark:border-slate-600 bg-white/60 dark:bg-slate-900/60"
+                      : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-[#2d4a22]"
                   }`}
                 >
                   <input
@@ -1417,42 +1444,113 @@ export default function AdminPortal({
                   
                   {isUploadingImage ? (
                     <div className="flex flex-col items-center space-y-2 pointer-events-none">
-                      <div className="w-8 h-8 rounded-full border-2 border-[#2d4a22]/80 border-t-transparent animate-spin" />
-                      <p className="text-[10px] font-bold text-[#2d4a22] font-mono animate-pulse">Téléchargement et stockage de l'image...</p>
+                      <div className="w-6 h-6 rounded-full border-2 border-[#2d4a22]/80 border-t-transparent animate-spin" />
+                      <p className="text-[10px] font-bold text-[#2d4a22] dark:text-emerald-400 font-mono animate-pulse">Téléchargement Image 1...</p>
                     </div>
                   ) : image ? (
-                    <div className="flex flex-col items-center space-y-2 pointer-events-none">
-                      <div className="w-24 h-24 rounded-2xl overflow-hidden border border-slate-200 shadow-md">
+                    <div className="flex items-center gap-3 pointer-events-none">
+                      <div className="w-16 h-16 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-xs shrink-0">
                         <SmartMedia 
                           src={image} 
-                          alt="Prévisualisation" 
+                          alt="Prévisualisation Image 1" 
                           containerClassName="w-full h-full"
                         />
                       </div>
-                      <p className="text-[10px] font-semibold text-[#2d4a22] font-mono">
-                        {image.startsWith("/uploads/") ? "Photo stockée avec succès sur le serveur" : "Média prêt à être publié"}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          setImage("");
-                        }}
-                        className="pointer-events-auto bg-rose-50 hover:bg-rose-500 text-rose-600 hover:text-white border border-rose-100 rounded-lg px-2.5 py-1 text-[9px] font-mono uppercase font-black transition-all"
-                      >
-                        Retirer la photo
-                      </button>
+                      <div className="text-left">
+                        <p className="text-[10px] font-semibold text-[#2d4a22] dark:text-emerald-400 font-mono">
+                          Image 1 chargée
+                        </p>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            setImage("");
+                          }}
+                          className="pointer-events-auto mt-1 bg-rose-50 dark:bg-rose-950/80 hover:bg-rose-500 text-rose-600 dark:text-rose-300 hover:text-white border border-rose-200 dark:border-rose-800 rounded-lg px-2 py-0.5 text-[9px] font-mono uppercase font-black transition-all"
+                        >
+                          Retirer
+                        </button>
+                      </div>
                     </div>
                   ) : (
-                    <div className="space-y-2 text-slate-500 pointer-events-none">
-                      <div className="mx-auto w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-[#2d4a22]">
-                        <ImageIcon className="w-5 h-5" />
-                      </div>
+                    <div className="space-y-1 text-slate-500 dark:text-slate-400 pointer-events-none">
                       <div className="text-xs">
-                        <span className="font-bold text-[#2d4a22]">Glissez-déposez ici</span> ou cliquez pour parcourir vos fichiers
+                        <span className="font-bold text-[#2d4a22] dark:text-emerald-400">Téléverser Image 1</span> ou glisser-déposer ici
                       </div>
-                      <p className="text-[9px] text-slate-400 font-medium">Format recommandé: JPG, PNG ou WebP. Limite 2 Mo.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* IMAGE 2 - Secondary Image Upload Only */}
+              <div className="space-y-1.5 md:col-span-2 p-4 bg-purple-50/50 dark:bg-purple-950/30 rounded-2xl border border-purple-200 dark:border-purple-800">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-mono font-bold uppercase tracking-wider text-purple-700 dark:text-purple-300">
+                    🖼️ Image 2 Secondaire (Téléversement Fichier Unique)
+                  </label>
+                  <span className="text-[9px] font-mono text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/80 px-2 py-0.5 rounded-md font-bold">
+                    Téléversement Fichier Seul
+                  </span>
+                </div>
+                
+                {/* Local Image 2 File Upload */}
+                <div
+                  onDragOver={handleDragOver2}
+                  onDragLeave={handleDragLeave2}
+                  onDrop={handleDrop2}
+                  className={`border-2 border-dashed rounded-xl p-4 text-center transition-all cursor-pointer relative min-h-[110px] flex flex-col items-center justify-center ${
+                    image2Dragging
+                      ? "border-purple-500 bg-purple-500/5"
+                      : image2
+                      ? "border-purple-300 dark:border-purple-700 bg-white/60 dark:bg-slate-900/60"
+                      : "border-purple-200 dark:border-purple-800 bg-white dark:bg-slate-900 hover:border-purple-500"
+                  }`}
+                >
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImage2Upload}
+                    id="local-image2-file-picker"
+                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                  />
+                  
+                  {isUploadingImage2 ? (
+                    <div className="flex flex-col items-center space-y-2 pointer-events-none">
+                      <div className="w-6 h-6 rounded-full border-2 border-purple-600 border-t-transparent animate-spin" />
+                      <p className="text-[10px] font-bold text-purple-600 font-mono animate-pulse">Téléchargement Image 2...</p>
+                    </div>
+                  ) : image2 ? (
+                    <div className="flex items-center gap-3 pointer-events-none">
+                      <div className="w-16 h-16 rounded-xl overflow-hidden border border-purple-200 dark:border-purple-800 shadow-xs shrink-0">
+                        <SmartMedia 
+                          src={image2} 
+                          alt="Prévisualisation Image 2" 
+                          containerClassName="w-full h-full"
+                        />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-[10px] font-semibold text-purple-700 dark:text-purple-300 font-mono">
+                          Image 2 secondaire prêtes
+                        </p>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            setImage2("");
+                          }}
+                          className="pointer-events-auto mt-1 bg-rose-50 dark:bg-rose-950/80 hover:bg-rose-500 text-rose-600 dark:text-rose-300 hover:text-white border border-rose-200 dark:border-rose-800 rounded-lg px-2 py-0.5 text-[9px] font-mono uppercase font-black transition-all"
+                        >
+                          Retirer Image 2
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1 text-purple-600 dark:text-purple-300 pointer-events-none">
+                      <div className="text-xs">
+                        <span className="font-bold">Téléverser Image 2 (Optionnel)</span> ou glisser-déposer ici
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1461,19 +1559,19 @@ export default function AdminPortal({
 
             {/* Custom description */}
             <div className="space-y-1.5">
-              <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Présentation & Matériaux</label>
+              <label className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Présentation & Matériaux</label>
               <textarea 
                 rows={3}
                 placeholder="Décrivez les finitions, l'inspiration..." 
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-100 focus:border-[#2d4a22] focus:bg-white rounded-xl px-3.5 py-2.5 text-xs outline-none transition-all resize-none"
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white dark:placeholder-slate-400 focus:border-[#2d4a22] focus:bg-white dark:focus:bg-slate-800 rounded-xl px-3.5 py-2.5 text-xs outline-none transition-all resize-none"
               />
             </div>
 
             {/* Configurator settings: Colors of fabric */}
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-101/80 space-y-3">
-              <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-[#2d4a22] block">Personnalisation 3D : Textures & Teintes colorées</span>
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-3">
+              <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-[#2d4a22] dark:text-emerald-400 block">Personnalisation 3D : Textures & Teintes colorées</span>
               
               <div className="flex flex-col sm:flex-row gap-3">
                 <input 
@@ -1481,7 +1579,7 @@ export default function AdminPortal({
                   placeholder="Nom de la couleur (ex: Camel de luxe)"
                   value={colorName}
                   onChange={(e) => setColorName(e.target.value)}
-                  className="flex-1 bg-white border border-slate-150 rounded-xl px-3 py-2 text-xs outline-none"
+                  className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white dark:placeholder-slate-400 rounded-xl px-3 py-2 text-xs outline-none"
                 />
                 
                 <div className="flex items-center gap-2">
@@ -1491,13 +1589,13 @@ export default function AdminPortal({
                     onChange={(e) => setColorHex(e.target.value)}
                     className="w-10 h-8 bg-transparent cursor-pointer border-none"
                   />
-                  <span className="text-[10px] font-mono font-bold text-slate-500 uppercase">{colorHex}</span>
+                  <span className="text-[10px] font-mono font-bold text-slate-500 dark:text-slate-400 uppercase">{colorHex}</span>
                 </div>
 
                 <button
                   type="button"
                   onClick={handleAddColor}
-                  className="px-4 py-2 bg-slate-800 hover:bg-[#2d4a22] text-white text-[10px] font-black uppercase rounded-xl transition-colors"
+                  className="px-4 py-2 bg-slate-800 hover:bg-[#2d4a22] text-white text-[10px] font-black uppercase rounded-xl transition-colors cursor-pointer"
                 >
                   Inclure cet échantillon
                 </button>
@@ -1508,14 +1606,14 @@ export default function AdminPortal({
                 {colorsList.map((c, idx) => (
                   <span 
                     key={`adm-col-${c.hex || idx}-${idx}`}
-                    className="flex items-center gap-2 bg-white text-slate-700 font-bold text-[10px] p-1.5 px-3 rounded-xl border border-slate-100 shadow-3xs"
+                    className="flex items-center gap-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-bold text-[10px] p-1.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-3xs"
                   >
                     <span className="w-2.5 h-2.5 rounded-full border border-black/10 inline-block" style={{ backgroundColor: c.hex }}></span>
                     {c.name}
                     <button 
                       type="button" 
                       onClick={() => removeColor(c.hex)}
-                      className="text-rose-500 hover:text-rose-700 font-black ml-1 scale-110"
+                      className="text-rose-500 hover:text-rose-700 font-black ml-1 scale-110 cursor-pointer"
                     >
                       &times;
                     </button>
@@ -1525,35 +1623,35 @@ export default function AdminPortal({
             </div>
 
             {/* Product configuration options (variants) */}
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-101/80 space-y-3">
-              <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-[#2d4a22] block">Variantes de taille ou de garnissage</span>
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-3">
+              <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-[#2d4a22] dark:text-emerald-400 block">Variantes de taille ou de garnissage</span>
               
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <span className="text-[8px] uppercase font-mono tracking-wider text-slate-400 block">Libellé variant (ex: Finition)</span>
+                  <span className="text-[8px] uppercase font-mono tracking-wider text-slate-500 dark:text-slate-400 block">Libellé variant (ex: Finition)</span>
                   <input 
                     type="text" 
                     placeholder="Libellé" 
                     value={variantsLabel}
                     onChange={(e) => setVariantsLabel(e.target.value)}
-                    className="w-full bg-white border border-slate-150 rounded-xl px-3 py-1.5 text-xs outline-none"
+                    className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white dark:placeholder-slate-400 rounded-xl px-3 py-1.5 text-xs outline-none"
                   />
                 </div>
                 
                 <div className="space-y-1 sm:col-span-2">
-                  <span className="text-[8px] uppercase font-mono tracking-wider text-slate-400 block">Valeurs d'options</span>
+                  <span className="text-[8px] uppercase font-mono tracking-wider text-slate-500 dark:text-slate-400 block">Valeurs d'options</span>
                   <div className="flex gap-2">
                     <input 
                       type="text" 
                       placeholder="Ajouter (ex : Coussin bouclé, Pieds bronze...)" 
                       value={variantInput}
                       onChange={(e) => setVariantInput(e.target.value)}
-                      className="flex-1 bg-white border border-slate-150 rounded-xl px-3 py-1.5 text-xs outline-none"
+                      className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white dark:placeholder-slate-400 rounded-xl px-3 py-1.5 text-xs outline-none"
                     />
                     <button
                       type="button"
                       onClick={handleAddVariant}
-                      className="px-3 py-1.5 bg-slate-800 hover:bg-[#2d4a22] text-white text-[10px] uppercase font-bold rounded-xl"
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-[#2d4a22] text-white text-[10px] uppercase font-bold rounded-xl cursor-pointer"
                     >
                       Ajouter
                     </button>
@@ -1566,13 +1664,13 @@ export default function AdminPortal({
                 {variantsList.map((v, idx) => (
                   <span 
                     key={`adm-var-${v}-${idx}`}
-                    className="flex items-center gap-1.5 bg-white text-slate-600 font-mono font-semibold text-[10px] p-1.5 px-3 rounded-lg border border-slate-150"
+                    className="flex items-center gap-1.5 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 font-mono font-semibold text-[10px] p-1.5 px-3 rounded-lg border border-slate-200 dark:border-slate-700"
                   >
                     {v}
                     <button 
                       type="button" 
                       onClick={() => removeVariant(v)}
-                      className="text-rose-500 hover:text-rose-700 font-bold ml-1 text-sm leading-none"
+                      className="text-rose-500 hover:text-rose-700 font-bold ml-1 text-sm leading-none cursor-pointer"
                     >
                       &times;
                     </button>
@@ -1582,8 +1680,8 @@ export default function AdminPortal({
             </div>
 
             {/* Custom technical highlights */}
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-101/80 space-y-3">
-              <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-[#2d4a22] block">Points Forts de Qualité (Atouts)</span>
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-3">
+              <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-[#2d4a22] dark:text-emerald-400 block">Points Forts de Qualité (Atouts)</span>
               
               <div className="flex gap-2">
                 <input 
@@ -1591,12 +1689,12 @@ export default function AdminPortal({
                   placeholder="ex : Cuir tanné végétal d'Italie certifié"
                   value={featureInput}
                   onChange={(e) => setFeatureInput(e.target.value)}
-                  className="flex-1 bg-white border border-slate-150 rounded-xl px-3 py-2 text-xs outline-none"
+                  className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white dark:placeholder-slate-400 rounded-xl px-3 py-2 text-xs outline-none"
                 />
                 <button
                   type="button"
                   onClick={handleAddFeatureBullet}
-                  className="px-4 py-2 bg-slate-800 hover:bg-[#2d4a22] text-white text-[10px] uppercase font-black rounded-xl"
+                  className="px-4 py-2 bg-slate-800 hover:bg-[#2d4a22] text-white text-[10px] uppercase font-black rounded-xl cursor-pointer"
                 >
                   Ajouter l'atout
                 </button>
@@ -1604,12 +1702,12 @@ export default function AdminPortal({
 
               <div className="space-y-1.5 max-h-[100px] overflow-y-auto pr-1">
                 {featuresList.map((f, i) => (
-                  <div key={`feat-bullet-${i}`} className="flex items-center justify-between text-xs bg-white p-2 rounded-xl border border-slate-100">
-                    <span className="font-sans font-medium text-slate-600">{f}</span>
+                  <div key={`feat-bullet-${i}`} className="flex items-center justify-between text-xs bg-white dark:bg-slate-900 p-2 rounded-xl border border-slate-200 dark:border-slate-700">
+                    <span className="font-sans font-medium text-slate-700 dark:text-slate-200">{f}</span>
                     <button 
                       type="button" 
                       onClick={() => removeFeatureBullet(i)}
-                      className="text-rose-500 hover:text-rose-700 font-bold px-1"
+                      className="text-rose-500 hover:text-rose-700 font-bold px-1 cursor-pointer"
                     >
                       Retirer
                     </button>

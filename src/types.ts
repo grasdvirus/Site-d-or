@@ -5,6 +5,7 @@ export interface Product {
   description: string;
   price: number;
   image: string;
+  image2?: string;
   category: string;
   colors: { name: string; hex: string }[];
   variantsLabel?: string; // e.g., "Switch Type" or "Taille"
