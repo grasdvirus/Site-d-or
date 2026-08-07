@@ -114,8 +114,19 @@ export default function App() {
   // Active translation dictionary
   const t = TRANSLATIONS[lang] || TRANSLATIONS.fr;
 
-  // Products state - initialized to empty first, synced live from Firestore
-  const [products, setProducts] = useState<Product[]>([]);
+  // Products state - initialized from local storage cache or initial catalog, synced live with Firestore
+  const [products, setProducts] = useState<Product[]>(() => {
+    try {
+      const saved = localStorage.getItem("sitedor_products_cache");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn("Error loading cached products:", e);
+    }
+    return INITIAL_PRODUCTS;
+  });
 
   // Cart State - Persisted locally
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -196,8 +207,17 @@ export default function App() {
   const [warrantyDropdownOpen, setWarrantyDropdownOpen] = useState(false);
   const [deliveryDropdownOpen, setDeliveryDropdownOpen] = useState(false);
 
-  // Dynamic promo codes list from Firestore (with fallbacks)
+  // Dynamic promo codes list from Firestore (with local storage & fallbacks)
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>(() => {
+    try {
+      const saved = localStorage.getItem("sitedor_promo_codes");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn("Failed to load local promo codes:", e);
+    }
     return [
       { code: "WELCOME10", discount: 10, description: "10% de réduction de bienvenue", status: "active" },
       { code: "SUMMER20", discount: 20, description: "20% de réduction d'été", status: "active" },
@@ -271,6 +291,9 @@ export default function App() {
         if (querySnapshot.empty) {
           // Fallback to sample catalog with affiliate codes and seed to Firestore
           setProducts(INITIAL_PRODUCTS);
+          try {
+            localStorage.setItem("sitedor_products_cache", JSON.stringify(INITIAL_PRODUCTS));
+          } catch (e) {}
           INITIAL_PRODUCTS.forEach((prod) => {
             setDoc(doc(db, "products", prod.id), prod).catch(() => {});
           });
@@ -287,11 +310,26 @@ export default function App() {
               uniqueMap.set(pid, p);
             }
           });
-          setProducts(Array.from(uniqueMap.values()));
+          const fetchedList = Array.from(uniqueMap.values());
+          setProducts(fetchedList);
+          try {
+            localStorage.setItem("sitedor_products_cache", JSON.stringify(fetchedList));
+          } catch (e) {}
         }
       },
       (err: any) => {
         console.warn("Firestore offline or listener timeout - loaded products from local fallback:", err);
+        try {
+          const saved = localStorage.getItem("sitedor_products_cache");
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setProducts(parsed);
+              setIsDbLoading(false);
+              return;
+            }
+          }
+        } catch (e) {}
         setProducts(INITIAL_PRODUCTS);
         setIsDbLoading(false);
       }
@@ -334,9 +372,25 @@ export default function App() {
             loaded.push(docSnapshot.data() as PromoCode);
           });
           setPromoCodes(loaded);
+          localStorage.setItem("sitedor_promo_codes", JSON.stringify(loaded));
+        } else {
+          const saved = localStorage.getItem("sitedor_promo_codes");
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              if (Array.isArray(parsed) && parsed.length > 0) setPromoCodes(parsed);
+            } catch(e){}
+          }
         }
       } catch (err: any) {
-        console.warn("Firestore promo codes error or offline, keeping fallback:", err);
+        console.warn("Firestore promo codes error or offline, keeping local storage:", err);
+        const saved = localStorage.getItem("sitedor_promo_codes");
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed) && parsed.length > 0) setPromoCodes(parsed);
+          } catch(e){}
+        }
       }
     };
     fetchPromoCodes();
@@ -746,11 +800,15 @@ export default function App() {
     }
   };
 
-  // Admin add, update and remove connected to firestore
+  // Admin add, update and remove connected to firestore and local storage
   const handleAddNewProduct = async (newProduct: Product) => {
     // Optimistic UI update
     const previousProducts = [...products];
-    setProducts([newProduct, ...products]);
+    const updated = [newProduct, ...products];
+    setProducts(updated);
+    try {
+      localStorage.setItem("sitedor_products_cache", JSON.stringify(updated));
+    } catch (e) {}
 
     try {
       // Async fire and forget
@@ -766,7 +824,11 @@ export default function App() {
   const handleUpdateProduct = async (updatedProduct: Product) => {
     // Optimistic UI update
     const previousProducts = [...products];
-    setProducts(products.map(p => p.id === updatedProduct.id ? updatedProduct : p));
+    const updated = products.map(p => p.id === updatedProduct.id ? updatedProduct : p);
+    setProducts(updated);
+    try {
+      localStorage.setItem("sitedor_products_cache", JSON.stringify(updated));
+    } catch (e) {}
 
     try {
       // Async fire and forget
@@ -783,7 +845,11 @@ export default function App() {
     // Optimistic UI update
     const previousProducts = [...products];
     const previousCart = [...cart];
-    setProducts(products.filter(p => p.id !== productId));
+    const updated = products.filter(p => p.id !== productId);
+    setProducts(updated);
+    try {
+      localStorage.setItem("sitedor_products_cache", JSON.stringify(updated));
+    } catch (e) {}
     setCart(cart.filter(item => item.product.id !== productId));
 
     try {
@@ -918,7 +984,7 @@ export default function App() {
     const typed = promoCodeInput.trim().toUpperCase();
     if (!typed) return;
 
-    const found = promoCodes.find(p => p.code === typed);
+    const found = promoCodes.find(p => p.code.trim().toUpperCase() === typed);
     if (found) {
       if (found.status === "active") {
         setActiveDiscount(found.discount);
@@ -951,33 +1017,40 @@ export default function App() {
   };
 
   const handleAddPromoCode = async (newPromo: PromoCode) => {
-    const previousPromos = [...promoCodes];
-    const exists = promoCodes.some(p => p.code === newPromo.code);
+    const cleanCode = newPromo.code.trim().toUpperCase();
+    const promoObj = { ...newPromo, code: cleanCode };
+    const exists = promoCodes.some(p => p.code === cleanCode);
+    
+    let updatedPromos: PromoCode[];
     if (exists) {
-      setPromoCodes(promoCodes.map(p => p.code === newPromo.code ? newPromo : p));
+      updatedPromos = promoCodes.map(p => p.code === cleanCode ? promoObj : p);
     } else {
-      setPromoCodes([newPromo, ...promoCodes]);
+      updatedPromos = [promoObj, ...promoCodes];
     }
+    setPromoCodes(updatedPromos);
+    try {
+      localStorage.setItem("sitedor_promo_codes", JSON.stringify(updatedPromos));
+    } catch(e){}
 
     try {
-      await setDoc(doc(db, "promo_codes", newPromo.code), newPromo);
+      await setDoc(doc(db, "promo_codes", cleanCode), promoObj);
     } catch (err) {
-      console.error("Failed to save promo code to Firestore, reverting:", err);
-      setPromoCodes(previousPromos);
-      handleFirestoreError(err, OperationType.WRITE, `promo_codes/${newPromo.code}`);
+      console.warn("Firestore promo code background save error (saved locally):", err);
     }
   };
 
   const handleDeletePromoCode = async (code: string) => {
-    const previousPromos = [...promoCodes];
-    setPromoCodes(promoCodes.filter(p => p.code !== code));
+    const cleanCode = code.trim().toUpperCase();
+    const updatedPromos = promoCodes.filter(p => p.code !== cleanCode);
+    setPromoCodes(updatedPromos);
+    try {
+      localStorage.setItem("sitedor_promo_codes", JSON.stringify(updatedPromos));
+    } catch(e){}
 
     try {
-      await deleteDoc(doc(db, "promo_codes", code));
+      await deleteDoc(doc(db, "promo_codes", cleanCode));
     } catch (err) {
-      console.error("Failed to delete promo code from Firestore, reverting:", err);
-      setPromoCodes(previousPromos);
-      handleFirestoreError(err, OperationType.DELETE, `promo_codes/${code}`);
+      console.warn("Firestore promo code background delete error (deleted locally):", err);
     }
   };
 
@@ -1380,6 +1453,7 @@ export default function App() {
             <Pricing 
               products={products} 
               onAddToCart={handleAddToCart} 
+              onOpenDetails={handleOpenProductDetails}
               lang={lang} 
               currency={currency} 
               layoutMode="collection" 
@@ -2484,6 +2558,7 @@ export default function App() {
               <Pricing 
                 products={products} 
                 onAddToCart={handleAddToCart} 
+                onOpenDetails={handleOpenProductDetails}
                 lang={lang} 
                 currency={currency} 
                 categories={categories}
@@ -3160,28 +3235,74 @@ export default function App() {
                       ))}
 
                       {/* Promo Code section */}
-                      <form onSubmit={handleApplyPromo} className="pt-4 border-t border-[#e6eee3] dark:border-slate-800 space-y-2 text-left">
-                        <label className="block text-[9px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{lang === 'en' ? "Promo Coupon Code" : "Ajouter un code de réduction"}</label>
+                      <form onSubmit={handleApplyPromo} className="pt-4 border-t border-[#e6eee3] dark:border-slate-800 space-y-2.5 text-left">
+                        <div className="flex items-center justify-between">
+                          <label className="block text-[9px] font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                            {lang === 'en' ? "Promo Coupon Code" : "Code de réduction"}
+                          </label>
+                          {promoCodes.some(p => p.status === "active") && (
+                            <span className="text-[9px] font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+                              {promoCodes.filter(p => p.status === "active").length} code(s) dispo(s)
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Clickable Quick Chips for active promo codes */}
+                        {promoCodes.filter(p => p.status === "active").length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 pb-1">
+                            {promoCodes.filter(p => p.status === "active").map((p, idx) => {
+                              const isApplied = appliedCodeName.includes(p.code);
+                              return (
+                                <button
+                                  key={`cart-chip-${p.code}-${idx}`}
+                                  type="button"
+                                  onClick={() => handleApplyPromoDirect(p)}
+                                  className={`text-[9px] font-mono font-bold px-2.5 py-1 rounded-lg border transition-all cursor-pointer flex items-center gap-1 ${
+                                    isApplied
+                                      ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                                      : "bg-emerald-50/80 dark:bg-slate-900 text-[#2d4a22] dark:text-emerald-400 border-emerald-200 dark:border-slate-800 hover:bg-emerald-100"
+                                  }`}
+                                >
+                                  <span>{p.code} (-{p.discount}%)</span>
+                                  {isApplied && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+
                         <div className="flex gap-2">
                           <input
                             type="text"
                             placeholder="ex : WELCOME10"
                             value={promoCodeInput}
                             onChange={(e) => setPromoCodeInput(e.target.value)}
-                            className="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-205 dark:border-slate-800 focus:border-[#2d4a22] rounded-lg px-3 py-2 text-xs text-slate-800 dark:text-slate-100 outline-none"
+                            className="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-250 dark:border-slate-800 focus:border-[#2d4a22] rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-800 dark:text-slate-100 outline-none"
                           />
                           <button
                             type="submit"
-                            className="bg-[#2d4a22] hover:bg-[#1a2d15] text-white text-[10px] uppercase font-bold tracking-wider px-4 rounded-lg cursor-pointer"
+                            className="bg-[#2d4a22] hover:bg-[#1a2d15] dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white dark:text-slate-950 text-[10px] uppercase font-extrabold tracking-wider px-4 rounded-xl cursor-pointer transition-all shadow-sm"
                           >
                             {lang === 'en' ? "Apply" : "Appliquer"}
                           </button>
                         </div>
                         {appliedCodeName && (
-                          <p className="text-[10px] text-emerald-600 font-bold">{t.promoApplied} : {appliedCodeName}</p>
+                          <div className="flex items-center justify-between text-[10px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-900">
+                            <span>{t.promoApplied} : {appliedCodeName}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveDiscount(0);
+                                setAppliedCodeName("");
+                              }}
+                              className="text-rose-500 hover:underline cursor-pointer text-[9px] font-mono"
+                            >
+                              Retirer
+                            </button>
+                          </div>
                         )}
                         {promoError && (
-                          <p className="text-[10px] text-rose-600 font-bold">{promoError}</p>
+                          <p className="text-[10px] text-rose-600 dark:text-rose-400 font-bold">{promoError}</p>
                         )}
                       </form>
                     </div>

@@ -9,13 +9,14 @@ import { ProductMediaGallery } from "./ProductMediaGallery";
 interface PricingProps {
   products: Product[];
   onAddToCart: (product: Product, color: { name: string; hex: string }, variant?: string) => void;
+  onOpenDetails?: (product: Product) => void;
   lang?: Language;
   currency?: Currency;
   layoutMode?: "grid" | "collection";
   categories?: string[];
 }
 
-export default function Pricing({ products, onAddToCart, lang = "fr", currency = "EUR", layoutMode = "grid", categories }: PricingProps) {
+export default function Pricing({ products, onAddToCart, onOpenDetails, lang = "fr", currency = "EUR", layoutMode = "grid", categories }: PricingProps) {
   const t = TRANSLATIONS[lang] || TRANSLATIONS.fr;
 
   // Filters & State
@@ -311,10 +312,10 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                   </div>
                 </div>
 
-                {/* Color Swatch selectors */}
-                {product.colors && product.colors.length > 1 && (
-                  <div className="flex gap-1.5 pt-1 items-center">
-                    <span className="text-[9px] font-mono text-slate-400 dark:text-slate-400 font-extrabold uppercase mr-1.5">
+                {/* Color Swatch selectors - always display when colors exist */}
+                {product.colors && product.colors.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1.5 items-center">
+                    <span className="text-[9px] font-mono text-slate-400 dark:text-slate-400 font-extrabold uppercase mr-1">
                       {lang === "en" ? "Colors:" : lang === "es" ? "Colores:" : lang === "ar" ? "الألوان :" : "Coloris :"}
                     </span>
                     {product.colors.map((color, idx) => (
@@ -327,8 +328,8 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                         }}
                         className={`w-4.5 h-4.5 rounded-full border-2 flex items-center justify-center transition-all cursor-pointer ${
                           activeColor.hex === color.hex
-                            ? "border-slate-800 dark:border-white scale-110"
-                            : "border-transparent hover:border-slate-305"
+                            ? "border-slate-800 dark:border-white scale-110 shadow-xs"
+                            : "border-slate-200 dark:border-slate-700 hover:border-slate-400"
                         }`}
                         title={color.name}
                       >
@@ -338,13 +339,18 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                         ></span>
                       </button>
                     ))}
+                    <span className="text-[10px] font-mono font-bold text-[#2d4a22] dark:text-emerald-400 ml-1">
+                      {activeColor.name}
+                    </span>
                   </div>
                 )}
 
-                {/* Sizing / Variant selection */}
-                {product.variants && product.variants.length > 1 && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-[9px] font-mono text-slate-400 dark:text-slate-400 font-extrabold uppercase">{product.variantsLabel || t.fabricColor} :</span>
+                {/* Sizing / Variant selection - always display when variants exist */}
+                {product.variants && product.variants.length > 0 && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <span className="text-[9px] font-mono text-slate-400 dark:text-slate-400 font-extrabold uppercase">
+                      {product.variantsLabel || (lang === "en" ? "Size / Option:" : "Taille / Option")} :
+                    </span>
                     <select
                       value={activeVariant || ""}
                       onChange={(e) => setSelectedVariants(prev => ({ ...prev, [product.id]: e.target.value }))}
@@ -360,8 +366,8 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                 )}
               </div>
 
-              {/* Card Footer pricing */}
-              <div className="px-5.5 py-4 bg-[#fbfdfa] dark:bg-slate-950 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
+              {/* Card Footer pricing & Action CTAs */}
+              <div className="px-5.5 py-4 bg-[#fbfdfa] dark:bg-slate-950 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2">
                 <div>
                   <span className="text-[9px] uppercase font-mono tracking-wider font-extrabold text-slate-400 dark:text-slate-400 block">{t.tarifBoutique}</span>
                   <span className="text-base font-mono font-bold text-slate-900 dark:text-white leading-none">
@@ -369,21 +375,33 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                   </span>
                 </div>
 
-                <motion.button
-                  type="button"
-                  disabled={product.stock === 0}
-                  onClick={() => handleAddToCart(product)}
-                  whileHover={{ scale: 1.12 }}
-                  whileTap={{ scale: 0.88 }}
-                  className={`relative p-3 rounded-full transition-colors duration-200 cursor-pointer flex items-center justify-center ${
-                    product.stock === 0
-                      ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed"
-                      : isAdded
-                      ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 ring-2 ring-emerald-400/40"
-                      : "bg-[#2d4a22] text-white hover:bg-[#1a2d15] shadow-sm hover:shadow-md"
-                  }`}
-                  title={product.stock === 0 ? "Épuisé" : t.addToCart}
-                >
+                <div className="flex items-center gap-2">
+                  {onOpenDetails && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenDetails(product)}
+                      className="px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-mono font-bold text-[10px] uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+                      title="Voir tous les détails, tailles et couleurs"
+                    >
+                      Détails
+                    </button>
+                  )}
+
+                  <motion.button
+                    type="button"
+                    disabled={product.stock === 0}
+                    onClick={() => handleAddToCart(product)}
+                    whileHover={{ scale: 1.08 }}
+                    whileTap={{ scale: 0.92 }}
+                    className={`relative p-3 rounded-xl transition-colors duration-200 cursor-pointer flex items-center justify-center ${
+                      product.stock === 0
+                        ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed"
+                        : isAdded
+                        ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 ring-2 ring-emerald-400/40"
+                        : "bg-[#2d4a22] text-white hover:bg-[#1a2d15] shadow-md"
+                    }`}
+                    title={product.stock === 0 ? "Épuisé" : t.addToCart}
+                  >
                   <AnimatePresence mode="wait">
                     {isAdded ? (
                       <motion.span
@@ -423,10 +441,10 @@ export default function Pricing({ products, onAddToCart, lang = "fr", currency =
                   </AnimatePresence>
                 </motion.button>
               </div>
-
             </div>
-          );
-        })}
+          </div>
+        );
+      })}
 
         {filteredProducts.length === 0 && (
           <div className="col-span-full text-center py-16 px-4 space-y-3 bg-[#fbfdfa] dark:bg-slate-900 rounded-[1.8rem] border border-[#e6eee3] dark:border-slate-800">
