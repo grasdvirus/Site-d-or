@@ -8,6 +8,7 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 import { formatPrice, formatOrderTotal, formatBespokePrice } from "../translations";
 import AnalyticsD3Dashboard from "./AnalyticsD3Dashboard";
 import { SmartMedia } from "./SmartMedia";
+import { uploadImageToSupabase, isSupabaseConfigured } from "../lib/supabase";
 
 interface AdminPortalProps {
   products: Product[];
@@ -654,30 +655,58 @@ export default function AdminPortal({
     });
   };
 
-  // Local image handlers
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 8 * 1024 * 1024) {
-        alert("La taille du fichier ne doit pas dépasser 8 Mo.");
-        return;
-      }
+  // Helper to read and compress file into Data URL format if needed
+  const readAndProcessFileAsBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = async () => {
         if (typeof reader.result === "string") {
-          setIsUploadingImage(true);
           try {
             const compressed = await compressImageIfNeeded(reader.result);
-            setImage(compressed);
-          } catch (err: any) {
-            console.error("Image processing error:", err);
-            setImage(reader.result);
-          } finally {
-            setIsUploadingImage(false);
+            resolve(compressed);
+          } catch {
+            resolve(reader.result);
           }
+        } else {
+          reject(new Error("Format de fichier non lisible"));
         }
       };
+      reader.onerror = () => reject(reader.error);
       reader.readAsDataURL(file);
+    });
+  };
+
+  // Local and Supabase image handlers
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 12 * 1024 * 1024) {
+      alert("La taille du fichier ne doit pas dépasser 12 Mo.");
+      return;
+    }
+
+    setIsUploadingImage(true);
+    try {
+      if (isSupabaseConfigured) {
+        const { url, error } = await uploadImageToSupabase(file, "images", "products");
+        if (url && !error) {
+          setImage(url);
+          return;
+        }
+        if (error) {
+          console.warn("Supabase Storage Upload Notice:", error);
+          if (error.includes("Bucket introuvable") || error.includes("bucket")) {
+            alert("Information Supabase Storage :\nLe bucket 'images' n'est pas encore créé sur votre projet Supabase.\n\nL'image a été importée et sauvegardée localement avec succès.\n\nPour stocker vos images directement dans votre cloud Supabase, allez dans votre Dashboard Supabase > Storage > New Bucket et créez un bucket nommé 'images' en mode Public.");
+          }
+        }
+      }
+
+      const base64Url = await readAndProcessFileAsBase64(file);
+      setImage(base64Url);
+    } catch (err) {
+      console.error("Error uploading primary image:", err);
+    } finally {
+      setIsUploadingImage(false);
     }
   };
 
@@ -690,61 +719,72 @@ export default function AdminPortal({
     setImageDragging(false);
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setImageDragging(false);
     const file = e.dataTransfer.files?.[0];
-    if (file) {
-      if (!file.type.startsWith("image/")) {
-        alert("Seuls les fichiers d'image sont acceptés.");
-        return;
-      }
-      if (file.size > 8 * 1024 * 1024) {
-        alert("La taille du fichier ne doit pas dépasser 8 Mo.");
-        return;
-      }
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        if (typeof reader.result === "string") {
-          setIsUploadingImage(true);
-          try {
-            const compressed = await compressImageIfNeeded(reader.result);
-            setImage(compressed);
-          } catch (err: any) {
-            console.error("Image processing error:", err);
-            setImage(reader.result);
-          } finally {
-            setIsUploadingImage(false);
-          }
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Seuls les fichiers d'image sont acceptés.");
+      return;
+    }
+    if (file.size > 12 * 1024 * 1024) {
+      alert("La taille du fichier ne doit pas dépasser 12 Mo.");
+      return;
+    }
+
+    setIsUploadingImage(true);
+    try {
+      if (isSupabaseConfigured) {
+        const { url, error } = await uploadImageToSupabase(file, "images", "products");
+        if (url && !error) {
+          setImage(url);
+          return;
         }
-      };
-      reader.readAsDataURL(file);
+        if (error && (error.includes("Bucket introuvable") || error.includes("bucket"))) {
+          alert("Information Supabase Storage :\nLe bucket 'images' est introuvable sur Supabase.\nL'image a été chargée localement avec succès.\n\nCréez un Bucket nommé 'images' (Public) dans votre interface Supabase (Storage > New Bucket).");
+        }
+      }
+
+      const base64Url = await readAndProcessFileAsBase64(file);
+      setImage(base64Url);
+    } catch (err) {
+      console.error("Error processing dropped image:", err);
+    } finally {
+      setIsUploadingImage(false);
     }
   };
 
   // Image 2 upload handlers
-  const handleImage2Upload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImage2Upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 8 * 1024 * 1024) {
-        alert("La taille du fichier ne doit pas dépasser 8 Mo.");
-        return;
-      }
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        if (typeof reader.result === "string") {
-          setIsUploadingImage2(true);
-          try {
-            const compressed = await compressImageIfNeeded(reader.result);
-            setImage2(compressed);
-          } catch (err: any) {
-            setImage2(reader.result);
-          } finally {
-            setIsUploadingImage2(false);
-          }
+    if (!file) return;
+
+    if (file.size > 12 * 1024 * 1024) {
+      alert("La taille du fichier ne doit pas dépasser 12 Mo.");
+      return;
+    }
+
+    setIsUploadingImage2(true);
+    try {
+      if (isSupabaseConfigured) {
+        const { url, error } = await uploadImageToSupabase(file, "images", "products");
+        if (url && !error) {
+          setImage2(url);
+          return;
         }
-      };
-      reader.readAsDataURL(file);
+        if (error && (error.includes("Bucket introuvable") || error.includes("bucket"))) {
+          alert("Information Supabase Storage :\nLe bucket 'images' est introuvable sur Supabase.\nL'image a été chargée localement avec succès.");
+        }
+      }
+
+      const base64Url = await readAndProcessFileAsBase64(file);
+      setImage2(base64Url);
+    } catch (err) {
+      console.error("Error uploading secondary image:", err);
+    } finally {
+      setIsUploadingImage2(false);
     }
   };
 
@@ -757,30 +797,36 @@ export default function AdminPortal({
     setImage2Dragging(false);
   };
 
-  const handleDrop2 = (e: React.DragEvent) => {
+  const handleDrop2 = async (e: React.DragEvent) => {
     e.preventDefault();
     setImage2Dragging(false);
     const file = e.dataTransfer.files?.[0];
-    if (file) {
-      if (!file.type.startsWith("image/")) {
-        alert("Seuls les fichiers d'image sont acceptés.");
-        return;
-      }
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        if (typeof reader.result === "string") {
-          setIsUploadingImage2(true);
-          try {
-            const compressed = await compressImageIfNeeded(reader.result);
-            setImage2(compressed);
-          } catch (err: any) {
-            setImage2(reader.result);
-          } finally {
-            setIsUploadingImage2(false);
-          }
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Seuls les fichiers d'image sont acceptés.");
+      return;
+    }
+
+    setIsUploadingImage2(true);
+    try {
+      if (isSupabaseConfigured) {
+        const { url, error } = await uploadImageToSupabase(file, "images", "products");
+        if (url && !error) {
+          setImage2(url);
+          return;
         }
-      };
-      reader.readAsDataURL(file);
+        if (error && (error.includes("Bucket introuvable") || error.includes("bucket"))) {
+          alert("Information Supabase Storage :\nLe bucket 'images' est introuvable sur Supabase.\nL'image a été chargée localement avec succès.");
+        }
+      }
+
+      const base64Url = await readAndProcessFileAsBase64(file);
+      setImage2(base64Url);
+    } catch (err) {
+      console.error("Error processing dropped secondary image:", err);
+    } finally {
+      setIsUploadingImage2(false);
     }
   };
 
@@ -2278,9 +2324,55 @@ export default function AdminPortal({
           <div className="border-b border-slate-100 dark:border-slate-800 pb-3 block">
             <h3 className="font-sans font-bold text-slate-800 dark:text-white text-base tracking-tight flex items-center gap-2">
               <Settings className="w-5 h-5 text-[#2d4a22]" />
-              Personnalisation Editoriale & FAQ dynamique
+              Personnalisation Éditoriale & FAQ dynamique
             </h3>
             <p className="text-[11px] text-slate-400 mt-1">Consignez les textes phares des modules d'information et de la foire aux questions sans toucher au code.</p>
+          </div>
+
+          {/* SUPABASE STORAGE & DATABASE INTEGRATION CARD */}
+          <div className="p-4 rounded-2xl border bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/60 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className={`w-3 h-3 rounded-full ${isSupabaseConfigured ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`}></div>
+                <span className="font-mono font-bold text-xs uppercase tracking-wider text-slate-800 dark:text-slate-100">
+                  Stockage d'Images Supabase : {isSupabaseConfigured ? "Connecté & Actif" : "En attente de clés URL / API"}
+                </span>
+              </div>
+              <span className={`text-[10px] font-mono px-2.5 py-1 rounded-full font-bold ${isSupabaseConfigured ? "bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300" : "bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300"}`}>
+                {isSupabaseConfigured ? "Plein Support d'Upload" : "Configuration Requise"}
+              </span>
+            </div>
+            
+            <div className="text-xs text-slate-600 dark:text-slate-300 font-sans space-y-2 leading-relaxed">
+              <p>
+                {isSupabaseConfigured ? (
+                  "Vos clés de connexion Supabase sont configurées. L'application essaie de téléverser vos images directement dans votre Bucket Supabase Storage."
+                ) : (
+                  "Pour stocker vos images directement sur Supabase, renseignez les variables d'environnement suivantes dans vos Paramètres / Secrets :"
+                )}
+              </p>
+
+              {isSupabaseConfigured && (
+                <div className="p-3 bg-white/80 dark:bg-slate-900/80 rounded-xl border border-emerald-200/60 dark:border-emerald-800/40 text-[11px] space-y-1.5">
+                  <div className="font-bold text-emerald-800 dark:text-emerald-400 font-mono uppercase tracking-wider">
+                    📌 Action requise sur Supabase (Si erreur "Bucket not found") :
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1 text-slate-700 dark:text-slate-300">
+                    <li>Rendez-vous sur votre Dashboard Supabase &gt; menu <strong>Storage</strong></li>
+                    <li>Cliquez sur <strong>New Bucket</strong></li>
+                    <li>Nommez le bucket : <code className="bg-emerald-100 dark:bg-emerald-950 text-emerald-900 dark:text-emerald-300 px-1.5 py-0.5 rounded font-mono font-bold">images</code></li>
+                    <li>Activez l'interrupteur <strong>Public Bucket</strong> puis validez</li>
+                  </ol>
+                </div>
+              )}
+            </div>
+
+            {!isSupabaseConfigured && (
+              <div className="bg-slate-900 text-emerald-400 font-mono text-[11px] p-3 rounded-xl space-y-1.5 overflow-x-auto">
+                <div>VITE_SUPABASE_URL=https://votre-projet.supabase.co</div>
+                <div>VITE_SUPABASE_ANON_KEY=votre_cle_anon_public</div>
+              </div>
+            )}
           </div>
 
           <div className="space-y-4">

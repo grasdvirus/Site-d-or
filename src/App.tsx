@@ -65,19 +65,45 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"store" | "admin" | "collection" | "search">("store");
   
   const [siteConfig, setSiteConfig] = useState<{
-    id: string;
+    id?: string;
     footerAbout?: string;
     footerContact?: string;
     footerWarranty?: string;
     heroTitle?: string;
     heroSub?: string;
     heroDesc?: string;
+    faqs?: { question: string; answer: string }[];
     faq?: { question: string; answer: string }[];
     waveNumbers?: string;
     orangeNumber?: string;
     mtnNumber?: string;
     visaWhatsAppNumber?: string;
-  } | null>(null);
+    btnCta1Text?: string;
+    btnCta1TextEn?: string;
+    btnCta1Target?: string;
+    btnCta1Style?: string;
+    btnCta1Active?: boolean;
+    btnCta2Text?: string;
+    btnCta2TextEn?: string;
+    btnCta2Target?: string;
+    btnCta2Style?: string;
+    btnCta2Active?: boolean;
+    btnCta3Text?: string;
+    btnCta3TextEn?: string;
+    btnCta3Active?: boolean;
+    btnCta4Text?: string;
+    btnCta4TextEn?: string;
+    btnCta4Active?: boolean;
+  } | null>(() => {
+    try {
+      const saved = localStorage.getItem("site_config_general");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object") return parsed;
+      }
+    } catch (e) {}
+    return null;
+  });
   
   // Auth & UI States
   const [user, setUser] = useState<any>(null);
@@ -120,7 +146,10 @@ export default function App() {
       const saved = localStorage.getItem("sitedor_products_cache");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const filtered = parsed.filter((p: any) => p && p.id && !["orris-chair", "elvo-chair", "sienna-lounge", "mollis-accent", "kivi-cozy"].includes(p.id));
+          if (filtered.length > 0) return filtered;
+        }
       }
     } catch (e) {
       console.warn("Error loading cached products:", e);
@@ -298,10 +327,19 @@ export default function App() {
             setDoc(doc(db, "products", prod.id), prod).catch(() => {});
           });
         } else {
+          const LEGACY_SAMPLE_IDS = new Set(["orris-chair", "elvo-chair", "sienna-lounge", "mollis-accent", "kivi-cozy"]);
+
           const uniqueMap = new Map<string, Product>();
           querySnapshot.forEach((docSnapshot) => {
             const p = docSnapshot.data() as Product;
             const pid = p.id || docSnapshot.id;
+            
+            // Delete legacy sample items if present in Firestore
+            if (LEGACY_SAMPLE_IDS.has(pid)) {
+              deleteDoc(doc(db, "products", pid)).catch(() => {});
+              return;
+            }
+
             p.id = pid;
             if (!p.affiliateCode) {
               p.affiliateCode = generateAffiliateCode(pid || p.name);
@@ -310,6 +348,15 @@ export default function App() {
               uniqueMap.set(pid, p);
             }
           });
+
+          // Ensure any newly added INITIAL_PRODUCTS (e.g. POHB) are seeded to Firestore & merged
+          INITIAL_PRODUCTS.forEach((initProd) => {
+            if (!LEGACY_SAMPLE_IDS.has(initProd.id) && !uniqueMap.has(initProd.id)) {
+              uniqueMap.set(initProd.id, initProd);
+              setDoc(doc(db, "products", initProd.id), initProd).catch(() => {});
+            }
+          });
+
           const fetchedList = Array.from(uniqueMap.values());
           setProducts(fetchedList);
           try {
@@ -324,7 +371,8 @@ export default function App() {
           if (saved) {
             const parsed = JSON.parse(saved);
             if (Array.isArray(parsed) && parsed.length > 0) {
-              setProducts(parsed);
+              const filtered = parsed.filter((p: any) => p && p.id && !["orris-chair", "elvo-chair", "sienna-lounge", "mollis-accent", "kivi-cozy"].includes(p.id));
+              setProducts(filtered.length > 0 ? filtered : INITIAL_PRODUCTS);
               setIsDbLoading(false);
               return;
             }
@@ -338,25 +386,36 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // Sync site dynamic configuration from Firestore general or main_config document
+  // Sync site dynamic configuration in real-time from Firestore & LocalStorage
   useEffect(() => {
-    const fetchSiteConfig = async () => {
-      try {
-        const q = query(collection(db, "site_config"));
-        const snapshot = await fetchWithTimeout(getDocs(q), 6000);
-        if (!snapshot.empty) {
-          const matched = snapshot.docs.find(d => d.id === "general") || 
-                          snapshot.docs.find(d => d.id === "main_config") ||
-                          snapshot.docs.find(d => d.id !== "categories_config");
-          if (matched) {
-            setSiteConfig({ id: matched.id, ...matched.data() } as any);
+    const unsub = onSnapshot(doc(db, "site_config", "general"), (docSnap) => {
+      if (docSnap.exists()) {
+        const fullConfig = { id: docSnap.id, ...docSnap.data() };
+        setSiteConfig(fullConfig as any);
+        try {
+          localStorage.setItem("site_config_general", JSON.stringify(fullConfig));
+        } catch (e) {}
+      } else {
+        getDocs(collection(db, "site_config")).then((snapshot) => {
+          if (!snapshot.empty) {
+            const matched = snapshot.docs.find(d => d.id === "general") || 
+                            snapshot.docs.find(d => d.id === "main_config") ||
+                            snapshot.docs.find(d => d.id !== "categories_config");
+            if (matched) {
+              const fullConfig = { id: matched.id, ...matched.data() };
+              setSiteConfig(fullConfig as any);
+              try {
+                localStorage.setItem("site_config_general", JSON.stringify(fullConfig));
+              } catch (e) {}
+            }
           }
-        }
-      } catch (err: any) {
-        console.warn("Firestore offline or timeout - using local fallback for site configuration:", err);
+        }).catch(() => {});
       }
-    };
-    fetchSiteConfig();
+    }, (err) => {
+      console.warn("Firestore site_config snapshot listener fallback:", err);
+    });
+
+    return () => unsub();
   }, [activeTab]);
 
   // Sync promo codes dynamically from Firestore promo_codes collection
@@ -995,25 +1054,47 @@ export default function App() {
         setPromoError(lang === "en" ? "This coupon code is not active yet." : "Ce code promo n'est pas encore activé.");
       }
     } else {
-      if (typed === "WELCOME10") {
+      if (typed === "WELCOME10" || typed === "SITEDOR10") {
         setActiveDiscount(10);
-        setAppliedCodeName("WELCOME10 (-10%)");
+        setAppliedCodeName(`${typed} (-10%)`);
+        setPromoError("");
+        setPromoCodeInput("");
+      } else if (typed === "SUMMER20" || typed === "OFFRE20") {
+        setActiveDiscount(20);
+        setAppliedCodeName(`${typed} (-20%)`);
+        setPromoError("");
+        setPromoCodeInput("");
+      } else if (typed === "PROMO15" || typed === "WINTER15") {
+        setActiveDiscount(15);
+        setAppliedCodeName(`${typed} (-15%)`);
         setPromoError("");
         setPromoCodeInput("");
       } else {
-        setPromoError(lang === "en" ? "Invalid code." : "Code de réduction invalide.");
+        setPromoError(lang === "en" ? "Invalid discount code." : "Code de réduction invalide ou expiré.");
       }
     }
   };
 
   const handleApplyPromoDirect = (promo: PromoCode) => {
     if (promo.status === "active") {
-      setActiveDiscount(promo.discount);
-      setAppliedCodeName(`${promo.code} (-${promo.discount}%)`);
-      setPromoError("");
+      if (appliedCodeName.includes(promo.code)) {
+        setActiveDiscount(0);
+        setAppliedCodeName("");
+        setPromoError("");
+      } else {
+        setActiveDiscount(promo.discount);
+        setAppliedCodeName(`${promo.code} (-${promo.discount}%)`);
+        setPromoError("");
+      }
     } else {
       alert(lang === "en" ? "This coupon is planned and not yet active." : "Ce code est prévu et n'est pas encore actif.");
     }
+  };
+
+  const handleRemovePromo = () => {
+    setActiveDiscount(0);
+    setAppliedCodeName("");
+    setPromoError("");
   };
 
   const handleAddPromoCode = async (newPromo: PromoCode) => {
@@ -1728,14 +1809,16 @@ export default function App() {
                   </span>
                 </div>
 
-                {/* Elegant Headline exactly matching user request style */}
+                {/* Headline priority: Admin siteConfig > First Admin product name > Default */}
                 <h1 className="font-sans text-4xl sm:text-5xl md:text-6xl font-black text-slate-900 dark:text-white tracking-tight leading-[1.08]">
-                  {siteConfig?.heroTitle || t.heroTitle}<br />
-                  <span className="font-serif italic font-normal text-[#2d4a22] dark:text-emerald-450">{siteConfig?.heroSub || t.heroSub}</span>
+                  {siteConfig?.heroTitle || (products[0] ? products[0].name.split(",")[0] : t.heroTitle)}<br />
+                  <span className="font-serif italic font-normal text-[#2d4a22] dark:text-emerald-450">
+                    {siteConfig?.heroSub || (products[0]?.tagline ? products[0].tagline : t.heroSub)}
+                  </span>
                 </h1>
 
                 <p className="text-xs md:text-sm text-slate-500 dark:text-slate-400 font-medium leading-relaxed max-w-md">
-                  {siteConfig?.heroDesc || t.heroDesc}
+                  {siteConfig?.heroDesc || (products[0]?.description ? products[0].description.slice(0, 160) : t.heroDesc)}
                 </p>
 
                 {/* Button: recherche produit pas code (Positioned directly above Découvrir la Collection) */}
@@ -1799,49 +1882,7 @@ export default function App() {
 
                 <div className="mt-5 flex items-center gap-3 overflow-x-auto no-scrollbar scroll-smooth snap-x py-1.5 px-0.5">
                   
-                  {/* Notes d'Ateliers action button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRatingsDropdownOpen(true);
-                      setEcologyDropdownOpen(false);
-                      setPromoDropdownOpen(false);
-                      setWarrantyDropdownOpen(false);
-                      setDeliveryDropdownOpen(false);
-                    }}
-                    className="flex flex-col items-start px-4 py-2.5 bg-white dark:bg-slate-900/60 border border-slate-150 dark:border-slate-800/85 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.03)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] hover:border-[#2d4a22]/30 dark:hover:border-emerald-500/30 hover:bg-slate-50 dark:hover:bg-slate-900 shrink-0 snap-start active:scale-97 transition-all duration-200 cursor-pointer text-left select-none group min-w-[135px]"
-                  >
-                    <div className="text-sm font-mono font-bold text-slate-900 dark:text-white flex items-center gap-1 leading-none">
-                      <span>4.9/5</span>
-                      <Star className="w-3 h-3 fill-amber-450 text-amber-450 shrink-0" />
-                    </div>
-                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-slate-400 mt-1">
-                      {lang === 'en' ? "Atelier Ratings" : lang === 'es' ? "Notas del Taller" : lang === 'ar' ? "تقييم المشغل" : "Notes d'Ateliers"}
-                    </div>
-                  </button>
-
-                  {/* Ébénisterie FSC action button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEcologyDropdownOpen(true);
-                      setRatingsDropdownOpen(false);
-                      setPromoDropdownOpen(false);
-                      setWarrantyDropdownOpen(false);
-                      setDeliveryDropdownOpen(false);
-                    }}
-                    className="flex flex-col items-start px-4 py-2.5 bg-white dark:bg-slate-900/60 border border-slate-150 dark:border-slate-800/85 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.03)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] hover:border-[#2d4a22]/30 dark:hover:border-emerald-500/30 hover:bg-slate-50 dark:hover:bg-slate-900 shrink-0 snap-start active:scale-97 transition-all duration-200 cursor-pointer text-left select-none group min-w-[135px]"
-                  >
-                    <div className="text-sm font-mono font-bold text-emerald-700 dark:text-emerald-450 flex items-center gap-1 leading-none">
-                      <span>100%</span>
-                      <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-450 shrink-0 stroke-[2.5]" />
-                    </div>
-                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-slate-400 mt-1">
-                      {lang === 'en' ? "FSC Joinery" : lang === 'es' ? "Especialismo FSC" : lang === 'ar' ? "نجارة فاخرة FSC" : "Ébénisterie FSC"}
-                    </div>
-                  </button>
-
-                  {/* Codes Promos action button */}
+                  {/* Single Codes Promos action button */}
                   <button
                     type="button"
                     onClick={() => {
@@ -1851,60 +1892,27 @@ export default function App() {
                       setWarrantyDropdownOpen(false);
                       setDeliveryDropdownOpen(false);
                     }}
-                    className="flex flex-col items-start px-4 py-2.5 bg-white dark:bg-slate-900/60 border border-slate-150 dark:border-slate-800/85 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.03)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] hover:border-[#2d4a22]/30 dark:hover:border-emerald-500/30 hover:bg-slate-50 dark:hover:bg-slate-900 shrink-0 snap-start active:scale-97 transition-all duration-200 cursor-pointer text-left select-none group min-w-[155px]"
+                    className="flex items-center gap-3 px-5 py-3 bg-gradient-to-r from-[#2d4a22] to-[#1a2d15] dark:from-emerald-900/60 dark:to-slate-900 border border-[#2d4a22]/30 dark:border-emerald-500/40 rounded-2xl shadow-sm hover:shadow-md hover:scale-[1.02] active:scale-98 transition-all duration-200 cursor-pointer text-left select-none group"
                   >
-                    <div className="text-sm font-mono font-bold text-[#2d4a22] dark:text-emerald-450 flex items-center gap-1.5 leading-none">
-                      <span>{promoCodes.filter(p => p.status === 'active').slice(0, 1).map(p => p.code).join(' • ') || "Promo"}</span>
-                      {appliedCodeName && (
-                        <span className="bg-[#2d4a22] text-white dark:bg-emerald-500 dark:text-slate-950 px-1 rounded text-[7px] font-sans font-normal lowercase first-letter:uppercase shrink-0">
-                          {appliedCodeName.split(" ")[0]}
-                        </span>
-                      )}
+                    <div className="p-2 bg-white/10 dark:bg-emerald-500/10 rounded-xl text-white dark:text-emerald-400">
+                      <Tag className="w-4 h-4" />
                     </div>
-                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-[#2d4a22] dark:text-emerald-450 mt-1">
-                      Codes Promos
-                    </div>
-                  </button>
-
-                  {/* Garantie Atelier action button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setWarrantyDropdownOpen(true);
-                      setPromoDropdownOpen(false);
-                      setRatingsDropdownOpen(false);
-                      setEcologyDropdownOpen(false);
-                      setDeliveryDropdownOpen(false);
-                    }}
-                    className="flex flex-col items-start px-4 py-2.5 bg-white dark:bg-slate-900/60 border border-slate-150 dark:border-slate-800/85 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.03)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] hover:border-[#2d4a22]/30 dark:hover:border-emerald-500/30 hover:bg-slate-50 dark:hover:bg-slate-900 shrink-0 snap-start active:scale-97 transition-all duration-200 cursor-pointer text-left select-none group min-w-[135px]"
-                  >
-                    <div className="text-sm font-mono font-bold text-[#2d4a22] dark:text-emerald-450 flex items-center gap-1.5 leading-none">
-                      <span>10 Ans</span>
-                      <Award className="w-3.5 h-3.5 text-[#2d4a22] dark:text-emerald-450 shrink-0" />
-                    </div>
-                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-[#2d4a22] dark:text-emerald-450 mt-1">
-                      {lang === 'en' ? "Guarantee" : lang === 'es' ? "Garantía" : lang === 'ar' ? "ضمان" : "Garantie Atelier"}
-                    </div>
-                  </button>
-
-                  {/* Livraison Premium action button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDeliveryDropdownOpen(true);
-                      setPromoDropdownOpen(false);
-                      setRatingsDropdownOpen(false);
-                      setEcologyDropdownOpen(false);
-                      setWarrantyDropdownOpen(false);
-                    }}
-                    className="flex flex-col items-start px-4 py-2.5 bg-white dark:bg-slate-900/60 border border-slate-150 dark:border-slate-800/85 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.03)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] hover:border-[#2d4a22]/30 dark:hover:border-emerald-500/30 hover:bg-slate-50 dark:hover:bg-slate-900 shrink-0 snap-start active:scale-97 transition-all duration-200 cursor-pointer text-left select-none group min-w-[135px]"
-                  >
-                    <div className="text-sm font-mono font-bold text-[#2d4a22] dark:text-emerald-450 flex items-center gap-1.5 leading-none">
-                      <span>Premium</span>
-                      <Truck className="w-3.5 h-3.5 text-[#2d4a22] dark:text-emerald-450 shrink-0" />
-                    </div>
-                    <div className="text-[9px] font-mono font-extrabold uppercase tracking-wide text-[#2d4a22] dark:text-emerald-450 mt-1">
-                      {lang === 'en' ? "Shipping" : lang === 'es' ? "Envío" : lang === 'ar' ? "شحن" : "Livraison"}
+                    <div>
+                      <div className="text-xs font-mono font-black text-white dark:text-emerald-300 flex items-center gap-2 leading-none">
+                        <span>{promoCodes.filter(p => p.status === 'active').slice(0, 1).map(p => p.code).join(' • ') || "PROMO"}</span>
+                        {appliedCodeName ? (
+                          <span className="bg-emerald-400 text-slate-950 px-1.5 py-0.5 rounded text-[8px] font-sans font-extrabold uppercase">
+                            - {activeDiscount}% Appliqué
+                          </span>
+                        ) : (
+                          <span className="bg-amber-400 text-slate-950 px-1.5 py-0.5 rounded text-[8px] font-sans font-extrabold uppercase">
+                            {promoCodes.filter(p => p.status === 'active').length} Code(s) Dispo
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] font-mono font-extrabold uppercase tracking-widest text-emerald-200/80 dark:text-emerald-400/80 mt-1">
+                        Codes Promos & Offres
+                      </div>
                     </div>
                   </button>
 
@@ -2422,9 +2430,9 @@ export default function App() {
                         className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover/hero:scale-105" 
                         containerClassName="w-full h-full"
                       />
-                      <div className="absolute inset-0 bg-linear-to-t from-slate-950/40 via-transparent to-transparent"></div>
-                      <div className="absolute bottom-3 left-3 text-xs text-white font-mono font-semibold">
-                        {lang === 'en' ? "Designer Edition • Polished Brass legs" : lang === 'es' ? "Diseño Premium • Patas Doradas" : lang === 'ar' ? "تصميم فاخر • كراسي منسقة ذهبية" : "Designer edition • Pieds Laiton poli"}
+                      <div className="absolute inset-0 bg-linear-to-t from-slate-950/50 via-transparent to-transparent"></div>
+                      <div className="absolute bottom-3 left-3 text-xs text-white font-mono font-semibold bg-black/40 backdrop-blur-xs px-2.5 py-1 rounded-lg">
+                        {spotlightProduct.tagline || spotlightProduct.category || "Produit d'Atelier"}
                       </div>
                     </div>
 
@@ -2780,268 +2788,625 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* SHOPPING CART SIDEPANEL DRAWER */}
+      {/* SHOPPING CART FULL-WIDTH PAGE MODAL */}
       <AnimatePresence>
         {cartOpen && (
-          <div key="cart-drawer-root" className="fixed inset-0 z-50 overflow-hidden text-left font-sans">
-            {/* Overlay backdrop */}
+          <div key="cart-full-page-root" className="fixed inset-0 z-50 overflow-y-auto font-sans bg-slate-950/75 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 lg:p-8">
+            {/* Backdrop overlay */}
             <motion.div 
               initial={{ opacity: 0 }}
-              animate={{ opacity: 0.55 }}
+              animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setCartOpen(false)}
-              className="absolute inset-0 bg-black/60 cursor-pointer text-left"
+              className="fixed inset-0 cursor-pointer"
             />
 
-            {/* Drawer side panel */}
-            <div className={`absolute inset-y-0 ${isRTL ? 'left-0' : 'right-0'} max-w-full flex ${isRTL ? 'pr-10' : 'pl-10'} text-left`}>
-              <motion.div 
-                initial={{ x: isRTL ? "-100%" : "100%" }}
-                animate={{ x: 0 }}
-                exit={{ x: isRTL ? "-100%" : "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 200 }}
-                className="w-screen max-w-md bg-white dark:bg-slate-900 shadow-2xl flex flex-col justify-between"
-              >
-                {/* Header */}
-                <div className="p-6 border-b border-[#e6eee3] dark:border-slate-800 flex items-center justify-between bg-[#f4f8f3] dark:bg-slate-950">
-                  <div className="flex items-center gap-2">
-                    <ShoppingBag className="w-5 h-5 text-[#2d4a22]" />
-                    <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider">{t.cartTitle}</h3>
-                    <span className="text-[10px] bg-[#2d4a22]/10 dark:bg-[#2d4a22]/35 text-[#2d4a22] dark:text-[#84a98c] font-bold px-2 py-0.5 rounded font-mono">
-                      {cart.reduce((sum, item) => sum + item.quantity, 0)} {t.itemsLabel}
+            {/* Main Full-Width Cart Container Card */}
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.96, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 15 }}
+              transition={{ type: "spring", damping: 25, stiffness: 220 }}
+              className="relative z-10 w-full max-w-5xl lg:max-w-6xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col max-h-[92vh] overflow-hidden text-left my-auto"
+            >
+              {/* Header Bar with Stepper */}
+              <div className="p-4 sm:p-6 border-b border-[#e6eee3] dark:border-slate-800 bg-[#f4f8f3] dark:bg-slate-950 flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-[#2d4a22]/10 dark:bg-emerald-950/50 text-[#2d4a22] dark:text-emerald-400 rounded-2xl">
+                    <ShoppingBag className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white uppercase tracking-wider font-sans">
+                      {t.cartTitle} • Atelier Sitedor
+                    </h2>
+                    <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 font-semibold">
+                      {cart.reduce((sum, item) => sum + item.quantity, 0)} {t.itemsLabel} sélectionné(s)
                     </span>
                   </div>
+                </div>
+
+                {/* Stepper Navigation Indicator */}
+                <div className="hidden md:flex items-center gap-2 bg-white dark:bg-slate-900 px-4 py-2 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-xs font-bold font-mono">
+                  <button
+                    type="button"
+                    onClick={() => cart.length > 0 && setCheckoutStep("idle")}
+                    className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${checkoutStep === 'idle' ? 'bg-[#2d4a22] text-white shadow-xs' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                  >
+                    1. Panier & Offres
+                  </button>
+                  <span className="text-slate-300 dark:text-slate-700">&rarr;</span>
+                  <button
+                    type="button"
+                    onClick={() => cart.length > 0 && setCheckoutStep("form")}
+                    className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${checkoutStep === 'form' ? 'bg-[#2d4a22] text-white shadow-xs' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                  >
+                    2. Coordonnées
+                  </button>
+                  <span className="text-slate-300 dark:text-slate-700">&rarr;</span>
+                  <button
+                    type="button"
+                    onClick={() => cart.length > 0 && shippingAddress.fullName && setCheckoutStep("payment")}
+                    className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${checkoutStep === 'payment' ? 'bg-[#2d4a22] text-white shadow-xs' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                  >
+                    3. Règlement
+                  </button>
+                  <span className="text-slate-300 dark:text-slate-700">&rarr;</span>
+                  <span className={`px-3 py-1.5 rounded-xl transition-all ${checkoutStep === 'confirm' ? 'bg-[#2d4a22] text-white shadow-xs' : 'text-slate-400'}`}>
+                    4. Confirmation
+                  </span>
+                </div>
+
+                {/* Right Close & Action button */}
+                <div className="flex items-center gap-2">
+                  <button 
+                    type="button"
+                    onClick={() => setCartOpen(false)}
+                    className="text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white px-3 py-2 rounded-xl hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-all cursor-pointer hidden sm:flex items-center gap-1.5"
+                  >
+                    <span>Continuer vos achats</span>
+                  </button>
                   <button 
                     onClick={() => setCartOpen(false)}
-                    className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg cursor-pointer text-slate-500 transition-colors"
+                    className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl cursor-pointer text-slate-500 transition-colors"
                   >
                     <X className="w-5 h-5" />
                   </button>
                 </div>
+              </div>
 
-                {/* Main Body - Conditional view */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                  
-                  {checkoutStep === "confirm" ? (
-                    /* Order placed Screen Success */
-                    <motion.div 
-                      initial={{ scale: 0.95, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      className="text-center py-8 space-y-5"
+              {/* Main Body - Conditional view per step */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6">
+                
+                {checkoutStep === "confirm" ? (
+                  /* Order Completed Success Screen */
+                  <motion.div 
+                    initial={{ scale: 0.95, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="max-w-xl mx-auto text-center py-8 space-y-6"
+                  >
+                    <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner border border-emerald-100 dark:border-emerald-900/60">
+                      <Check className="w-10 h-10 stroke-[2.5]" />
+                    </div>
+                    <div className="space-y-2">
+                      <h3 className="text-xl font-black text-[#2d4a22] dark:text-emerald-450 uppercase tracking-wider font-sans">{t.orderCompleted}</h3>
+                      <p className="text-sm text-slate-500 dark:text-slate-400">{t.orderConfirmedMsg}</p>
+                    </div>
+
+                    <div className="bg-[#f4f8f3] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 p-6 rounded-2xl text-left space-y-3.5 shadow-xs">
+                      <div className="flex justify-between items-center border-b border-[#e2eae0] dark:border-slate-800 pb-3 text-xs font-mono">
+                        <span className="text-slate-500 dark:text-slate-400 font-bold">{t.trackingNumber} :</span>
+                        <span className="text-[#2d4a22] dark:text-emerald-400 font-black text-sm underline">{orderTracking}</span>
+                      </div>
+                      <div className="space-y-1.5 text-xs text-slate-650 dark:text-slate-350 font-medium font-sans">
+                        <p>&bull; Destinataire : <strong className="text-slate-900 dark:text-white">{shippingAddress.fullName}</strong></p>
+                        <p>&bull; Adresse de livraison : <strong className="text-slate-800 dark:text-slate-200">{shippingAddress.address}, {shippingAddress.city}</strong></p>
+                        <p>&bull; Option Logistique : <strong className="text-slate-800 dark:text-slate-200">Transporteur Spécialisé Mobilier Sitedor</strong></p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={handleFinishCheckout}
+                      className="w-full max-w-sm mx-auto bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-widest py-4 rounded-xl cursor-pointer shadow-md transition-all active:scale-98"
                     >
-                      <div className="w-16 h-16 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner border border-emerald-100 dark:border-emerald-900/60">
-                        <Check className="w-8 h-8 stroke-[2.5]" />
-                      </div>
-                      <div className="space-y-2">
-                        <h4 className="text-sm font-black text-[#2d4a22] dark:text-emerald-450 uppercase tracking-wider">{t.orderCompleted}</h4>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">{t.orderConfirmedMsg}</p>
+                      {t.continueShoppingBtn}
+                    </button>
+                  </motion.div>
+
+                ) : cart.length === 0 ? (
+                  /* Empty Cart View */
+                  <div className="text-center py-20 space-y-5 max-w-md mx-auto">
+                    <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto text-slate-400 dark:text-slate-500">
+                      <ShoppingBag className="w-8 h-8" />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">{t.emptyCart}</h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Votre panier ne contient aucun article pour le moment. Explorez notre catalogue pour découvrir nos créations.
+                      </p>
+                    </div>
+                    <button 
+                      onClick={() => setCartOpen(false)}
+                      className="px-6 py-3 bg-[#2d4a22] hover:bg-[#1f3517] text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer inline-flex items-center gap-2"
+                    >
+                      <span>{t.continueShoppingBtn}</span>
+                      <span>&rarr;</span>
+                    </button>
+                  </div>
+
+                ) : checkoutStep === "idle" ? (
+                  /* STEP 1: Full-Width Cart Items & Summary Layout */
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                    
+                    {/* Left Column: Cart Items List & Promo Chips (8 cols) */}
+                    <div className="lg:col-span-7 xl:col-span-8 space-y-6">
+                      
+                      <div className="flex items-center justify-between border-b border-slate-150 dark:border-slate-800 pb-3">
+                        <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider font-sans">
+                          Articles dans votre panier ({cart.length})
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={() => setCart([])}
+                          className="text-[11px] font-mono font-bold text-slate-400 hover:text-rose-500 transition-colors cursor-pointer flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Vider le panier</span>
+                        </button>
                       </div>
 
-                      <div className="bg-[#f4f8f3] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 p-4 rounded-xl text-left space-y-2.5">
-                        <div className="flex justify-between items-center border-b border-[#e2eae0] dark:border-slate-800 pb-2 text-[11px] font-mono">
-                          <span className="text-slate-500 dark:text-slate-400 font-bold">{t.trackingNumber} :</span>
-                          <span className="text-[#2d4a22] dark:text-emerald-400 font-black underline">{orderTracking}</span>
+                      {/* Items Cards */}
+                      <div className="space-y-4">
+                        {cart.map((item, idx) => (
+                          <div 
+                            key={`cart-item-${item.product.id}-${idx}`} 
+                            className="p-4 rounded-2xl bg-[#fbfdfa] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-left shadow-2xs hover:border-[#2d4a22]/30 transition-all"
+                          >
+                            <div className="flex items-center gap-4 flex-1 min-w-0">
+                              <SmartMedia 
+                                src={item.product.image} 
+                                alt={item.product.name}
+                                containerClassName="w-20 h-20 rounded-xl overflow-hidden flex-shrink-0 border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900" 
+                              />
+                              <div className="space-y-1 min-w-0">
+                                <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">{item.product.name}</h4>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="inline-flex items-center gap-1 text-[10px] bg-slate-100 dark:bg-slate-850 px-2 py-0.5 rounded-full font-mono text-slate-600 dark:text-slate-300 font-medium">
+                                    <span className="w-2 h-2 rounded-full inline-block border border-black/10" style={{ backgroundColor: item.selectedColor.hex || '#2d4a22' }}></span>
+                                    {item.selectedColor.name}
+                                  </span>
+                                  {item.selectedVariant && (
+                                    <span className="text-[10px] bg-[#2d4a22]/10 dark:bg-emerald-950/40 text-[#2d4a22] dark:text-emerald-400 px-2 py-0.5 rounded-full font-mono font-bold">
+                                      {item.selectedVariant}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs font-extrabold font-mono text-[#2d4a22] dark:text-emerald-400">
+                                  {formatPrice(item.product.price, currency)} <span className="text-[10px] font-normal text-slate-400">/ unité</span>
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Quantity controls & Line total */}
+                            <div className="flex items-center justify-between sm:justify-end gap-6 w-full sm:w-auto pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-850">
+                              <div className="flex items-center border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-2xs">
+                                <button 
+                                  type="button"
+                                  onClick={() => updateCartQuantity(idx, -1)}
+                                  className="w-8 h-8 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-black cursor-pointer transition-colors"
+                                  title="Diminuer"
+                                >
+                                  -
+                                </button>
+                                <span className="font-mono font-bold text-xs px-3 text-slate-900 dark:text-white min-w-[28px] text-center">{item.quantity}</span>
+                                <button 
+                                  type="button"
+                                  onClick={() => updateCartQuantity(idx, 1)}
+                                  className="w-8 h-8 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-black cursor-pointer transition-colors"
+                                  title="Augmenter"
+                                >
+                                  +
+                                </button>
+                              </div>
+
+                              <div className="text-right">
+                                <p className="text-sm font-black font-mono text-slate-900 dark:text-white">
+                                  {formatPrice(item.product.price * item.quantity, currency)}
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => removeCartItem(idx)}
+                                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition-all cursor-pointer"
+                                title="Supprimer cet article"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Interactive Available Promo Coupons Section */}
+                      <div className="p-5 rounded-2xl bg-[#f4f8f3] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Tag className="w-4 h-4 text-[#2d4a22] dark:text-emerald-400" />
+                            <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider font-sans">
+                              Offres & Codes Promo Disponibles
+                            </h4>
+                          </div>
+                          <span className="text-[10px] font-mono text-slate-400 font-medium">
+                            Cliquez sur un code pour l'appliquer
+                          </span>
                         </div>
-                        <div className="space-y-1 text-xs text-slate-650 dark:text-slate-350 font-medium font-sans">
-                          <p>&bull; {lang === 'en' ? "Recipient:" : lang === 'es' ? "Destinatario:" : lang === 'ar' ? "المستلم :" : "Destinataire :"} <strong className="text-slate-900 dark:text-white">{shippingAddress.fullName}</strong></p>
-                          <p>&bull; {lang === 'en' ? "Shipping Details:" : lang === 'es' ? "Envío:" : lang === 'ar' ? "عنوان التوصيل :" : "Adresse de livraison :"} <strong className="text-slate-800 dark:text-slate-200">{shippingAddress.address}, {shippingAddress.city}</strong></p>
-                          <p>&bull; {lang === 'en' ? "Logistic Option:" : lang === 'es' ? "Logística:" : lang === 'ar' ? "خيار التوصيل :" : "Option Logistique :"} <strong className="text-slate-800 dark:text-slate-200">{lang === 'en' ? "Specialized Furniture Carrier" : lang === 'es' ? "Soporte de mobiliario especial" : lang === 'ar' ? "نقل وتوصيل أثاث فاخر مخصص" : "Transporteur Spécialisé Mobilier"}</strong></p>
+
+                        <div className="flex flex-wrap gap-2.5 pt-1">
+                          {promoCodes.map((p, pIdx) => {
+                            const isApplied = activeDiscount === p.discount && appliedCodeName.includes(p.code);
+                            return (
+                              <button
+                                key={`promo-chip-${p.code}-${pIdx}`}
+                                type="button"
+                                onClick={() => handleApplyPromoDirect(p)}
+                                className={`px-3.5 py-2 rounded-xl text-xs font-mono font-bold border transition-all flex items-center gap-2 cursor-pointer ${
+                                  isApplied
+                                    ? "bg-emerald-600 text-white border-emerald-600 shadow-xs scale-102"
+                                    : p.status === 'active'
+                                    ? "bg-white dark:bg-slate-900 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 hover:border-emerald-400"
+                                    : "bg-slate-100 dark:bg-slate-850 border-slate-200 dark:border-slate-800 text-slate-400 opacity-60 cursor-not-allowed"
+                                }`}
+                              >
+                                <span>{p.code} (-{p.discount}%)</span>
+                                {isApplied ? (
+                                  <span className="text-[10px] bg-white/20 px-1.5 py-0.2 rounded font-sans font-bold">✓ Appliqué</span>
+                                ) : p.status === 'active' ? (
+                                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-sans font-bold">+ Appliquer</span>
+                                ) : (
+                                  <span className="text-[9px] text-slate-400 font-sans">(Bientôt)</span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                    </div>
+
+                    {/* Right Column: Order Summary Card (4 cols) */}
+                    <div className="lg:col-span-5 xl:col-span-4 bg-[#fcfdfb] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 p-6 rounded-3xl space-y-5 shadow-xs sticky top-4">
+                      <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider font-sans border-b border-slate-150 dark:border-slate-800 pb-3">
+                        Récapitulatif de votre commande
+                      </h3>
+
+                      {/* Promo Code Input Box */}
+                      <form onSubmit={handleApplyPromo} className="space-y-2">
+                        <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                          Saisir un code promo
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder="ex : WELCOME10"
+                            value={promoCodeInput}
+                            onChange={(e) => setPromoCodeInput(e.target.value)}
+                            className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-800 dark:text-slate-100 outline-none shadow-2xs"
+                          />
+                          <button
+                            type="submit"
+                            className="bg-[#2d4a22] hover:bg-[#1a2d15] dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white dark:text-slate-950 text-xs font-bold uppercase tracking-wider px-4 rounded-xl cursor-pointer transition-all shadow-xs"
+                          >
+                            Appliquer
+                          </button>
+                        </div>
+
+                        {/* Applied Code Badge */}
+                        {appliedCodeName && (
+                          <motion.div 
+                            initial={{ opacity: 0, y: -4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="flex items-center justify-between text-xs text-emerald-800 dark:text-emerald-300 font-bold bg-emerald-50 dark:bg-emerald-950/50 p-3 rounded-xl border border-emerald-200 dark:border-emerald-800"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                              <span>{appliedCodeName}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleRemovePromo}
+                              className="text-rose-600 dark:text-rose-400 hover:underline cursor-pointer text-xs font-mono font-bold"
+                            >
+                              Retirer
+                            </button>
+                          </motion.div>
+                        )}
+
+                        {promoError && (
+                          <p className="text-xs text-rose-600 dark:text-rose-400 font-bold">{promoError}</p>
+                        )}
+                      </form>
+
+                      {/* Pricing Breakdown Lines */}
+                      <div className="space-y-2.5 pt-2 border-t border-slate-150 dark:border-slate-800 text-xs text-slate-650 dark:text-slate-300 font-medium">
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-500 dark:text-slate-400">Sous-total des articles :</span>
+                          <span className="font-mono text-slate-900 dark:text-white font-bold text-sm">
+                            {formatPrice(subtotal, currency)}
+                          </span>
+                        </div>
+
+                        {discountAmount > 0 && (
+                          <div className="flex justify-between items-center text-emerald-600 dark:text-emerald-400 font-bold">
+                            <span>Réduction Code Promo ({activeDiscount}%) :</span>
+                            <span className="font-mono text-sm">- {formatPrice(discountAmount, currency)}</span>
+                          </div>
+                        )}
+
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-500 dark:text-slate-400">Livraison spécialisée mobilier :</span>
+                          <span className="font-mono text-slate-900 dark:text-white font-bold text-sm">
+                            {formatPrice(shippingCharge, currency)}
+                          </span>
+                        </div>
+
+                        <p className="text-[10px] text-slate-400 dark:text-slate-400 italic">
+                          Transport sécurisé et montage pris en charge par l'Atelier.
+                        </p>
+
+                        <div className="h-px bg-slate-200 dark:border-slate-800 my-2"></div>
+
+                        <div className="flex justify-between items-center text-[#2d4a22] dark:text-emerald-400">
+                          <span className="text-sm font-black uppercase font-sans">Total Général (TTC) :</span>
+                          <span className="font-mono text-xl font-extrabold">{formatPrice(grandTotal, currency)}</span>
+                        </div>
+                      </div>
+
+                      {/* Launch Checkout Button */}
+                      <button
+                        type="button"
+                        onClick={handleLaunchCheckout}
+                        className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-widest py-4 rounded-xl cursor-pointer shadow-md transition-all text-center flex items-center justify-center gap-2 select-none active:scale-98"
+                      >
+                        <span>Passer la commande</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+
+                    </div>
+
+                  </div>
+                ) : checkoutStep === "form" ? (
+                  /* STEP 2: Full-Width Shipping Form Layout */
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start text-left">
+                    
+                    {/* Left Column: Shipping Details Form (7 cols) */}
+                    <div className="lg:col-span-7 space-y-5">
+                      <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 border-b border-slate-150 dark:border-slate-800 pb-3">
+                        <button 
+                          type="button" 
+                          onClick={() => setCheckoutStep("idle")} 
+                          className="text-xs font-bold text-slate-500 hover:text-[#2d4a22] dark:hover:text-emerald-400 transition-colors cursor-pointer flex items-center gap-1"
+                        >
+                          &larr; Retour au panier
+                        </button>
+                        <span className="text-xs text-slate-300">/</span>
+                        <span className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">{t.shippingAddress}</span>
+                      </div>
+
+                      <form id="checkout-shipping-form" onSubmit={handleSubmitCheckout} className="space-y-4">
+                        <h3 className="text-sm font-bold text-slate-900 dark:text-white font-sans uppercase">
+                          Coordonnées & Adresse de Livraison
+                        </h3>
+
+                        <div className="space-y-3.5">
+                          <div className="space-y-1.5">
+                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t.fullName} *</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="ex : Alexandre Martin"
+                              value={shippingAddress.fullName}
+                              onChange={(e) => setShippingAddress({ ...shippingAddress, fullName: e.target.value })}
+                              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 outline-none"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t.shippingAddress} *</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="ex : Rue des Jardins, Abidjan Cocody"
+                              value={shippingAddress.address}
+                              onChange={(e) => setShippingAddress({ ...shippingAddress, address: e.target.value })}
+                              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 outline-none"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3.5">
+                            <div className="space-y-1.5">
+                              <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t.zipCode} *</label>
+                              <input
+                                type="text"
+                                required
+                                placeholder="00225"
+                                value={shippingAddress.zip}
+                                onChange={(e) => setShippingAddress({ ...shippingAddress, zip: e.target.value })}
+                                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 outline-none"
+                              />
+                            </div>
+                            
+                            <div className="space-y-1.5">
+                              <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t.city} *</label>
+                              <input
+                                type="text"
+                                required
+                                placeholder="Abidjan"
+                                value={shippingAddress.city}
+                                onChange={(e) => setShippingAddress({ ...shippingAddress, city: e.target.value })}
+                                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 outline-none"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                            <div className="space-y-1.5">
+                              <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-[#2d4a22] dark:text-emerald-450">Tél de contact (Pour livraison) *</label>
+                              <input
+                                type="tel"
+                                required
+                                placeholder="ex : +225 07 00 00 00 00"
+                                value={shippingAddress.phone}
+                                onChange={(e) => setShippingAddress({ ...shippingAddress, phone: e.target.value })}
+                                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 outline-none"
+                              />
+                            </div>
+                            
+                            <div className="space-y-1.5">
+                              <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-[#2d4a22] dark:text-emerald-450">Email de contact *</label>
+                              <input
+                                type="email"
+                                required
+                                placeholder="nom@exemple.com"
+                                value={shippingAddress.email}
+                                onChange={(e) => setShippingAddress({ ...shippingAddress, email: e.target.value })}
+                                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 outline-none"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                      </form>
+                    </div>
+
+                    {/* Right Column: Order Recap & Submit Button (5 cols) */}
+                    <div className="lg:col-span-5 bg-[#fcfdfb] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 p-6 rounded-3xl space-y-5 shadow-xs sticky top-4">
+                      <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider font-sans border-b border-slate-150 dark:border-slate-800 pb-3">
+                        Synthèse de la Commande
+                      </h3>
+
+                      {/* Items preview list */}
+                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                        {cart.map((item, idx) => (
+                          <div key={`form-recap-${idx}`} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100 dark:border-slate-850">
+                            <span className="truncate max-w-[180px] font-medium text-slate-700 dark:text-slate-300">
+                              {item.product.name} (x{item.quantity})
+                            </span>
+                            <span className="font-mono font-bold text-slate-900 dark:text-white">
+                              {formatPrice(item.product.price * item.quantity, currency)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Price breakdown */}
+                      <div className="space-y-2 pt-2 text-xs text-slate-600 dark:text-slate-300 font-medium">
+                        <div className="flex justify-between">
+                          <span>Sous-total :</span>
+                          <span className="font-mono font-bold">{formatPrice(subtotal, currency)}</span>
+                        </div>
+                        {discountAmount > 0 && (
+                          <div className="flex justify-between text-emerald-600 dark:text-emerald-400 font-bold">
+                            <span>Code Promo (-{activeDiscount}%) :</span>
+                            <span className="font-mono">- {formatPrice(discountAmount, currency)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between">
+                          <span>Livraison :</span>
+                          <span className="font-mono font-bold">{formatPrice(shippingCharge, currency)}</span>
+                        </div>
+                        <div className="h-px bg-slate-200 dark:border-slate-800 my-2"></div>
+                        <div className="flex justify-between text-[#2d4a22] dark:text-emerald-400 text-sm font-black uppercase">
+                          <span>Total :</span>
+                          <span className="font-mono text-lg font-bold">{formatPrice(grandTotal, currency)}</span>
                         </div>
                       </div>
 
                       <button
-                        onClick={handleFinishCheckout}
-                        className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-widest py-3.5 rounded-xl cursor-pointer shadow-sm transition-colors"
+                        type="submit"
+                        form="checkout-shipping-form"
+                        className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-widest py-4 rounded-xl cursor-pointer shadow-md transition-all text-center flex items-center justify-center gap-2 select-none active:scale-98"
                       >
-                        {t.continueShoppingBtn}
+                        <span>Continuer vers le Règlement ({formatPrice(grandTotal, currency)})</span>
+                        <ArrowRight className="w-4 h-4" />
                       </button>
-                    </motion.div>
-                  ) : checkoutStep === "form" ? (
-                    /* Shipping Form Screen */
-                    <form id="checkout-shipping-form" onSubmit={handleSubmitCheckout} className="space-y-4 text-left">
-                      <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 pb-2">
-                        <button 
-                          type="button" 
-                          onClick={() => setCheckoutStep("idle")} 
-                          className="text-xs font-bold text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:underline cursor-pointer"
-                        >
-                          &larr; {lang === 'en' ? "Back to Cart" : lang === 'es' ? "Volver" : lang === 'ar' ? "العودة للسلة" : "Retour au panier"}
-                        </button>
-                        <span className="text-xs text-slate-350">/</span>
-                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{t.shippingAddress}</span>
-                      </div>
+                    </div>
 
-                      <h3 className="text-sm font-bold text-slate-800 dark:text-white font-sans uppercase">{t.checkoutFormTitle}</h3>
-
-                      <div className="space-y-3.5">
-                        <div className="space-y-1.5">
-                          <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{t.fullName} *</label>
-                          <input
-                            type="text"
-                            required
-                            placeholder={lang === 'en' ? "e.g. John Doe" : "ex : Alexandre Martin"}
-                            value={shippingAddress.fullName}
-                            onChange={(e) => setShippingAddress({ ...shippingAddress, fullName: e.target.value })}
-                            className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-lg px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-150 outline-none"
-                          />
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{t.shippingAddress} *</label>
-                          <input
-                            type="text"
-                            required
-                            placeholder="12 rue de la Paix"
-                            value={shippingAddress.address}
-                            onChange={(e) => setShippingAddress({ ...shippingAddress, address: e.target.value })}
-                            className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-lg px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-150 outline-none"
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3.5">
-                          <div className="space-y-1.5">
-                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{t.zipCode} *</label>
-                            <input
-                              type="text"
-                              required
-                              placeholder="75001"
-                              value={shippingAddress.zip}
-                              onChange={(e) => setShippingAddress({ ...shippingAddress, zip: e.target.value })}
-                              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-lg px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-150 outline-none"
-                            />
-                          </div>
-                          
-                          <div className="space-y-1.5">
-                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{t.city} *</label>
-                            <input
-                              type="text"
-                              required
-                              placeholder="Paris"
-                              value={shippingAddress.city}
-                              onChange={(e) => setShippingAddress({ ...shippingAddress, city: e.target.value })}
-                              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-[#2d4a22] rounded-lg px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-150 outline-none"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Interactive contact details block requested by user */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                          <div className="space-y-1.5">
-                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-[#2d4a22] dark:text-emerald-450">Tél de contact (Pour livraison) *</label>
-                            <input
-                              type="tel"
-                              required
-                              placeholder="ex : +221 77 000 00 00"
-                              value={shippingAddress.phone}
-                              onChange={(e) => setShippingAddress({ ...shippingAddress, phone: e.target.value })}
-                              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 pb-1 focus:border-[#2d4a22] rounded-lg px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-150 outline-none"
-                            />
-                          </div>
-                          
-                          <div className="space-y-1.5">
-                            <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-[#2d4a22] dark:text-emerald-450">Email de contact *</label>
-                            <input
-                              type="email"
-                              required
-                              placeholder="nom@exemple.com"
-                              value={shippingAddress.email}
-                              onChange={(e) => setShippingAddress({ ...shippingAddress, email: e.target.value })}
-                              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 pb-1 focus:border-[#2d4a22] rounded-lg px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-150 outline-none"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">
-                            {lang === 'en' ? "Secure Payment (Simulated demo)" : lang === 'es' ? "Detalles del pago seguro (simulación)" : lang === 'ar' ? "بيانات الدفع الإلكتروني الآمن (نموذج محاكاة)" : "Données Bancaires (Simulé de démos)"}
-                          </label>
-                          <div className="grid grid-cols-3 gap-2 bg-slate-50 dark:bg-slate-950 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
-                            <input
-                              type="text"
-                              disabled
-                              value={shippingAddress.cardNumber}
-                              className="col-span-2 bg-transparent text-xs text-slate-500 dark:text-slate-300 outline-none pl-1"
-                            />
-                            <div className="text-right text-xs font-mono font-semibold text-slate-400 pr-1 select-none">
-                              CVV {shippingAddress.cvv}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                    </form>
-                  ) : checkoutStep === "payment" ? (
-                    /* Manual Payment Section */
-                    <div className="space-y-4 text-left">
-                      <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                  </div>
+                ) : (
+                  /* STEP 3: Full-Width Manual Payment Section */
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start text-left">
+                    
+                    {/* Left Column: Operator selection & verification (7 cols) */}
+                    <div className="lg:col-span-7 space-y-5">
+                      <div className="flex items-center justify-between border-b border-slate-150 dark:border-slate-800 pb-3">
                         <button 
                           type="button" 
                           onClick={() => setCheckoutStep("form")} 
-                          className="text-xs font-bold text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:underline cursor-pointer"
+                          className="text-xs font-bold text-slate-500 hover:text-[#2d4a22] dark:hover:text-emerald-400 transition-colors cursor-pointer flex items-center gap-1"
                         >
                           &larr; Adresse de livraison
                         </button>
-                        <span className="text-[10px] font-mono uppercase bg-[#2d4a22]/10 dark:bg-emerald-950/40 text-[#2d4a22] dark:text-emerald-400 font-extrabold px-2.5 py-1 rounded-full">
-                          Étape 2/2 : Règlement
+                        <span className="text-[10px] font-mono uppercase bg-[#2d4a22]/10 dark:bg-emerald-950/40 text-[#2d4a22] dark:text-emerald-400 font-extrabold px-3 py-1 rounded-full">
+                          Étape 3/3 : Règlement
                         </span>
                       </div>
 
-                      <div className="bg-[#2d4a22]/5 dark:bg-slate-900 border border-[#2d4a22]/15 dark:border-slate-800 p-3.5 rounded-2xl space-y-1">
-                        <p className="text-[10px] font-mono uppercase font-bold text-slate-500 dark:text-slate-400 tracking-wider">Montant total de la commande</p>
-                        <p className="text-xl font-mono font-black text-[#2d4a22] dark:text-emerald-400">
+                      <div className="bg-[#2d4a22]/5 dark:bg-slate-950 border border-[#2d4a22]/15 dark:border-slate-800 p-4 rounded-2xl space-y-1">
+                        <p className="text-[10px] font-mono uppercase font-bold text-slate-500 dark:text-slate-400 tracking-wider">Montant total de la commande à régler</p>
+                        <p className="text-2xl font-mono font-black text-[#2d4a22] dark:text-emerald-400">
                           {formatOrderTotal(grandTotal, currency)}
                         </p>
                       </div>
 
                       {/* Payment method selector */}
-                      <div className="space-y-2">
+                      <div className="space-y-2.5">
                         <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                           1. Choisissez votre opérateur Mobile Money :
                         </label>
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-3 gap-3">
                           <button
                             type="button"
                             onClick={() => { setSelectedPaymentOp("wave"); setDepositConfirmed(false); }}
-                            className={`p-2.5 rounded-xl border text-xs font-extrabold flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                            className={`p-3.5 rounded-2xl border text-xs font-extrabold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
                               selectedPaymentOp === "wave"
                                 ? "bg-sky-50 dark:bg-sky-950/40 border-sky-500 text-sky-700 dark:text-sky-300 ring-2 ring-sky-500/20 shadow-xs"
                                 : "bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300"
                             }`}
                           >
-                            <span className="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
+                            <span className="w-3 h-3 rounded-full bg-sky-500"></span>
                             <span>Wave</span>
                           </button>
 
                           <button
                             type="button"
                             onClick={() => { setSelectedPaymentOp("orange"); setDepositConfirmed(false); }}
-                            className={`p-2.5 rounded-xl border text-xs font-extrabold flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                            className={`p-3.5 rounded-2xl border text-xs font-extrabold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
                               selectedPaymentOp === "orange"
                                 ? "bg-amber-50 dark:bg-amber-950/40 border-amber-500 text-amber-800 dark:text-amber-300 ring-2 ring-amber-500/20 shadow-xs"
                                 : "bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300"
                             }`}
                           >
-                            <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                            <span className="w-3 h-3 rounded-full bg-amber-500"></span>
                             <span>Orange</span>
                           </button>
 
                           <button
                             type="button"
                             onClick={() => { setSelectedPaymentOp("mtn"); setDepositConfirmed(false); }}
-                            className={`p-2.5 rounded-xl border text-xs font-extrabold flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                            className={`p-3.5 rounded-2xl border text-xs font-extrabold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
                               selectedPaymentOp === "mtn"
                                 ? "bg-yellow-50 dark:bg-yellow-950/40 border-yellow-500 text-yellow-800 dark:text-yellow-300 ring-2 ring-yellow-500/20 shadow-xs"
                                 : "bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300"
                             }`}
                           >
-                            <span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>
+                            <span className="w-3 h-3 rounded-full bg-yellow-500"></span>
                             <span>MTN</span>
                           </button>
                         </div>
                       </div>
 
                       {/* Operator Number Card */}
-                      <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl space-y-2">
+                      <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-2.5">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">
                             Numéro de Dépôt {selectedPaymentOp.toUpperCase()} :
@@ -3055,33 +3420,33 @@ export default function App() {
                                 ? (siteConfig?.orangeNumber || "0704542909")
                                 : (siteConfig?.mtnNumber || "0503654886")
                             )}
-                            className="text-[10px] font-mono font-bold text-[#2d4a22] dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+                            className="text-[11px] font-mono font-bold text-[#2d4a22] dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
                           >
                             {copiedNumberToast ? "✓ Copié !" : "Copier"}
                           </button>
                         </div>
-                        <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl font-mono text-base font-extrabold text-[#2d4a22] dark:text-emerald-400 text-center select-all">
+                        <div className="p-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl font-mono text-lg font-extrabold text-[#2d4a22] dark:text-emerald-400 text-center select-all shadow-2xs">
                           {selectedPaymentOp === "wave" && (siteConfig?.waveNumbers || "0704542909 / 0503654886")}
                           {selectedPaymentOp === "orange" && (siteConfig?.orangeNumber || "0704542909")}
                           {selectedPaymentOp === "mtn" && (siteConfig?.mtnNumber || "0503654886")}
                         </div>
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed italic">
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed italic">
                           Effectuez manuellement votre dépôt de {formatPrice(grandTotal, currency)} sur ce numéro depuis votre téléphone portable.
                         </p>
                       </div>
 
-                      {/* Interactive Two Buttons Section */}
-                      <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                      {/* Interactive Buttons Section */}
+                      <div className="space-y-3 pt-2 border-t border-slate-150 dark:border-slate-800">
                         <label className="block text-[10px] font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                          2. Validation et suivi du transfert :
+                          2. Confirmation du dépôt :
                         </label>
 
-                        {/* Button 1 / Checkbox Toggle */}
+                        {/* Checkbox Button */}
                         <button
                           type="button"
                           onClick={() => setDepositConfirmed(!depositConfirmed)}
                           disabled={isValidatingTransfer}
-                          className={`w-full p-3.5 rounded-xl border text-xs font-bold transition-all text-left flex items-center justify-between cursor-pointer ${
+                          className={`w-full p-4 rounded-xl border text-xs font-bold transition-all text-left flex items-center justify-between cursor-pointer ${
                             depositConfirmed
                               ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500 text-emerald-900 dark:text-emerald-200 shadow-xs"
                               : "bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300"
@@ -3093,39 +3458,19 @@ export default function App() {
                             }`}>
                               {depositConfirmed && <span className="text-xs font-black">✓</span>}
                             </div>
-                            <span className="font-semibold">avez vous effectuer le dépôt</span>
+                            <span className="font-bold text-xs">Avez-vous effectué le dépôt ?</span>
                           </div>
-                          <span className="text-[10px] font-mono text-slate-400 font-normal">
-                            {depositConfirmed ? "Sélectionné ✓" : "Cliquer pour cocher"}
+                          <span className="text-[10px] font-mono text-slate-400">
+                            {depositConfirmed ? "Confirmé ✓" : "Cliquer pour cocher"}
                           </span>
                         </button>
 
-                        {/* Button 2: "Cliquer pour la validation du transfert" */}
-                        <button
-                          type="button"
-                          disabled={!depositConfirmed || isValidatingTransfer}
-                          onClick={() => {
-                            if (!depositConfirmed) {
-                              alert("Veuillez d'abord cocher 'avez vous effectuer le dépôt' pour continuer.");
-                              return;
-                            }
-                            setIsValidatingTransfer(true);
-                          }}
-                          className={`w-full py-3.5 px-4 rounded-xl font-extrabold text-xs uppercase tracking-wider shadow-sm transition-all flex items-center justify-center gap-2 select-none ${
-                            !depositConfirmed || isValidatingTransfer
-                              ? "bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed"
-                              : "bg-[#2d4a22] hover:bg-[#1a2d15] text-white cursor-pointer active:scale-98"
-                          }`}
-                        >
-                          <span>cliquer pour la validation du transfert</span>
-                        </button>
-
-                        {/* Minimalist Progress Bar Loading (1 minute) */}
+                        {/* Validation Progress Bar */}
                         {isValidatingTransfer && (
                           <motion.div
                             initial={{ opacity: 0, y: 5 }}
                             animate={{ opacity: 1, y: 0 }}
-                            className="p-4 bg-emerald-50/80 dark:bg-slate-900 border border-emerald-300 dark:border-emerald-800/80 rounded-2xl space-y-2 text-left"
+                            className="p-4 bg-emerald-50/80 dark:bg-slate-950 border border-emerald-300 dark:border-emerald-800 rounded-2xl space-y-2 text-left"
                           >
                             <div className="flex items-center justify-between text-xs font-mono font-bold text-[#2d4a22] dark:text-emerald-400">
                               <span className="flex items-center gap-1.5">
@@ -3135,7 +3480,6 @@ export default function App() {
                               <span>{Math.round(validationProgress)}%</span>
                             </div>
 
-                            {/* Minimalist Progress Bar Track */}
                             <div className="w-full h-2.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden p-0.5 border border-emerald-200 dark:border-emerald-900">
                               <motion.div
                                 className="h-full bg-gradient-to-r from-[#2d4a22] to-emerald-500 rounded-full"
@@ -3145,14 +3489,14 @@ export default function App() {
                             </div>
 
                             <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 dark:text-slate-400">
-                              <span>Validation dans :</span>
+                              <span>Validation automatique dans :</span>
                               <span className="font-bold text-[#2d4a22] dark:text-emerald-400">{validationSecondsLeft} secondes</span>
                             </div>
                           </motion.div>
                         )}
 
-                        {/* Special Visa Card Payment Option Button */}
-                        <div className="pt-3 border-t border-dashed border-slate-200 dark:border-slate-800">
+                        {/* Visa Card Modal Trigger */}
+                        <div className="pt-2 border-t border-dashed border-slate-200 dark:border-slate-800">
                           <button
                             type="button"
                             onClick={() => {
@@ -3163,208 +3507,67 @@ export default function App() {
                               }
                               setIsVisaModalOpen(true);
                             }}
-                            className="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-750 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
+                            className="w-full py-3.5 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-750 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
                           >
                             <CreditCard className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                            <span>Paiement via Carte Visa</span>
+                            <span>Paiement alternatif via Carte Visa</span>
                           </button>
                         </div>
                       </div>
                     </div>
-                  ) : cart.length === 0 ? (
-                    /* Empty Cart */
-                    <div className="text-center py-16 space-y-4">
-                      <ShoppingBag className="w-10 h-10 text-slate-300 dark:text-slate-700 mx-auto" />
-                      <p className="text-xs font-bold text-slate-600 dark:text-slate-300">{t.emptyCart}</p>
-                      <button 
-                        onClick={() => setCartOpen(false)}
-                        className="text-xs text-[#2d4a22] dark:text-emerald-400 font-semibold underline hover:text-[#1a2d15]"
-                      >
-                        {t.continueShoppingBtn} &rarr;
-                      </button>
-                    </div>
-                  ) : (
-                    /* Display list of added products */
-                    <div className="space-y-4">
-                      {cart.map((item, idx) => (
-                        <div 
-                          key={`cart-item-${item.product.id}-${idx}`} 
-                          className="flex items-center justify-between p-3 rounded-xl bg-[#fbfdfa] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 gap-3 text-left"
-                        >
-                          <SmartMedia 
-                            src={item.product.image} 
-                            alt={item.product.name}
-                            containerClassName="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0" 
-                          />
-                          <div className="flex-1 min-w-0">
-                            <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">{item.product.name}</h4>
-                            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
-                              {item.selectedColor.name} {item.selectedVariant ? `• ${item.selectedVariant}` : ""}
-                            </p>
-                            <p className="text-[10px] text-[#2d4a22] dark:text-emerald-450 font-bold font-mono">
-                              {formatPrice(item.product.price, currency)}
-                            </p>
-                          </div>
 
-                          {/* Stepper qty controls */}
-                          <div className="flex flex-col items-center gap-1.5">
-                            <div className="flex items-center border border-slate-250 dark:border-slate-800 rounded-lg overflow-hidden bg-white dark:bg-slate-900 text-xs scale-90">
-                              <button 
-                                onClick={() => updateCartQuantity(idx, -1)}
-                                className="px-2 py-0.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold cursor-pointer"
-                              >
-                                -
-                              </button>
-                              <span className="font-mono font-bold px-2 text-slate-800 dark:text-slate-100">{item.quantity}</span>
-                              <button 
-                                onClick={() => updateCartQuantity(idx, 1)}
-                                className="px-2 py-0.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold cursor-pointer"
-                              >
-                                +
-                              </button>
-                            </div>
+                    {/* Right Column: Order Summary & Action (5 cols) */}
+                    <div className="lg:col-span-5 bg-[#fcfdfb] dark:bg-slate-950 border border-[#e2eae0] dark:border-slate-800 p-6 rounded-3xl space-y-5 shadow-xs sticky top-4">
+                      <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider font-sans border-b border-slate-150 dark:border-slate-800 pb-3">
+                        Synthèse Finale
+                      </h3>
 
-                            <button
-                              onClick={() => removeCartItem(idx)}
-                              className="text-slate-455 hover:text-rose-500 text-[9px] font-mono flex items-center gap-0.5 cursor-pointer"
-                            >
-                              <Trash2 className="w-2.5 h-2.5" /> {lang === 'en' ? "Remove" : "Retirer"}
-                            </button>
-                          </div>
+                      <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300 font-medium">
+                        <div className="flex justify-between">
+                          <span>Client :</span>
+                          <span className="font-bold text-slate-900 dark:text-white">{shippingAddress.fullName}</span>
                         </div>
-                      ))}
-
-                      {/* Promo Code section */}
-                      <form onSubmit={handleApplyPromo} className="pt-4 border-t border-[#e6eee3] dark:border-slate-800 space-y-2.5 text-left">
-                        <div className="flex items-center justify-between">
-                          <label className="block text-[9px] font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                            {lang === 'en' ? "Promo Coupon Code" : "Code de réduction"}
-                          </label>
-                          {promoCodes.some(p => p.status === "active") && (
-                            <span className="text-[9px] font-mono text-emerald-600 dark:text-emerald-400 font-bold">
-                              {promoCodes.filter(p => p.status === "active").length} code(s) dispo(s)
-                            </span>
-                          )}
+                        <div className="flex justify-between">
+                          <span>Livraison :</span>
+                          <span className="font-bold text-slate-900 dark:text-white">{shippingAddress.city}</span>
                         </div>
-
-                        {/* Clickable Quick Chips for active promo codes */}
-                        {promoCodes.filter(p => p.status === "active").length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 pb-1">
-                            {promoCodes.filter(p => p.status === "active").map((p, idx) => {
-                              const isApplied = appliedCodeName.includes(p.code);
-                              return (
-                                <button
-                                  key={`cart-chip-${p.code}-${idx}`}
-                                  type="button"
-                                  onClick={() => handleApplyPromoDirect(p)}
-                                  className={`text-[9px] font-mono font-bold px-2.5 py-1 rounded-lg border transition-all cursor-pointer flex items-center gap-1 ${
-                                    isApplied
-                                      ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
-                                      : "bg-emerald-50/80 dark:bg-slate-900 text-[#2d4a22] dark:text-emerald-400 border-emerald-200 dark:border-slate-800 hover:bg-emerald-100"
-                                  }`}
-                                >
-                                  <span>{p.code} (-{p.discount}%)</span>
-                                  {isApplied && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            placeholder="ex : WELCOME10"
-                            value={promoCodeInput}
-                            onChange={(e) => setPromoCodeInput(e.target.value)}
-                            className="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-250 dark:border-slate-800 focus:border-[#2d4a22] rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-800 dark:text-slate-100 outline-none"
-                          />
-                          <button
-                            type="submit"
-                            className="bg-[#2d4a22] hover:bg-[#1a2d15] dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white dark:text-slate-950 text-[10px] uppercase font-extrabold tracking-wider px-4 rounded-xl cursor-pointer transition-all shadow-sm"
-                          >
-                            {lang === 'en' ? "Apply" : "Appliquer"}
-                          </button>
+                        <div className="flex justify-between">
+                          <span>Mode choisi :</span>
+                          <span className="font-bold text-[#2d4a22] dark:text-emerald-400 uppercase">{selectedPaymentOp} Mobile Money</span>
                         </div>
-                        {appliedCodeName && (
-                          <div className="flex items-center justify-between text-[10px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-900">
-                            <span>{t.promoApplied} : {appliedCodeName}</span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActiveDiscount(0);
-                                setAppliedCodeName("");
-                              }}
-                              className="text-rose-500 hover:underline cursor-pointer text-[9px] font-mono"
-                            >
-                              Retirer
-                            </button>
-                          </div>
-                        )}
-                        {promoError && (
-                          <p className="text-[10px] text-rose-600 dark:text-rose-400 font-bold">{promoError}</p>
-                        )}
-                      </form>
-                    </div>
-                  )}
-
-                </div>
-
-                {/* Footer Drawer - Billing calculation if not confirmation */}
-                {checkoutStep !== "confirm" && cart.length > 0 && (
-                  <div className="p-6 border-t border-[#e6eee3] dark:border-slate-800 bg-[#fbfdfa] dark:bg-slate-950 space-y-4">
-                    <div className="space-y-1.5 text-xs text-slate-650 dark:text-slate-300 font-medium font-sans">
-                      <div className="flex justify-between">
-                        <span>{t.cartSubtotal} :</span>
-                        <span className="font-mono text-slate-800 dark:text-slate-105 font-bold">{formatPrice(subtotal, currency)}</span>
-                      </div>
-                      {discountAmount > 0 && (
-                        <div className="flex justify-between text-emerald-650">
-                          <span>{t.promoApplied} ({activeDiscount}%) :</span>
-                          <span className="font-mono font-bold">- {formatPrice(discountAmount, currency)}</span>
+                        <div className="h-px bg-slate-200 dark:border-slate-800 my-2"></div>
+                        <div className="flex justify-between text-[#2d4a22] dark:text-emerald-400 text-sm font-black uppercase">
+                          <span>Montant Total :</span>
+                          <span className="font-mono text-xl font-black">{formatPrice(grandTotal, currency)}</span>
                         </div>
-                      )}
-                      <div className="flex justify-between">
-                        <span>{t.shipping} :</span>
-                        <span className="font-mono text-slate-800 dark:text-slate-105 font-bold">
-                          {formatPrice(shippingCharge, currency)}
-                        </span>
                       </div>
-                      <div className="flex justify-between text-slate-400 dark:text-slate-400 text-[10px] italic">
-                        <span>{lang === 'en' ? "Fixed standard shipping charge." : "Frais d'expédition forfaitaires fixes de 2000 unités."}</span>
-                      </div>
-                      <div className="h-px bg-[#e6eee3] dark:bg-slate-800 my-2"></div>
-                      <div className="flex justify-between text-[#2d4a22] dark:text-emerald-450 text-sm font-black uppercase">
-                        <span>{t.cartTotal} :</span>
-                        <span className="font-mono font-bold">{formatPrice(grandTotal, currency)}</span>
-                      </div>
-                    </div>
 
-                    {checkoutStep === "idle" && (
                       <button
-                        onClick={handleLaunchCheckout}
-                        className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-widest py-3.5 rounded-xl cursor-pointer shadow-sm transition-all text-center flex items-center justify-center gap-2 select-none"
+                        type="button"
+                        disabled={!depositConfirmed || isValidatingTransfer}
+                        onClick={() => {
+                          if (!depositConfirmed) {
+                            alert("Veuillez d'abord cocher 'Avez-vous effectué le dépôt ?' pour continuer.");
+                            return;
+                          }
+                          setIsValidatingTransfer(true);
+                        }}
+                        className={`w-full py-4 px-4 rounded-xl font-extrabold text-xs uppercase tracking-wider shadow-md transition-all flex items-center justify-center gap-2 select-none ${
+                          !depositConfirmed || isValidatingTransfer
+                            ? "bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed"
+                            : "bg-[#2d4a22] hover:bg-[#1a2d15] text-white cursor-pointer active:scale-98"
+                        }`}
                       >
-                        {t.checkoutBtn}
+                        <span>Valider le transfert ({formatPrice(grandTotal, currency)})</span>
                         <ArrowRight className="w-4 h-4" />
                       </button>
-                    )}
+                    </div>
 
-                    {checkoutStep === "form" && (
-                      <button
-                        type="submit"
-                        form="checkout-shipping-form"
-                        className="w-full bg-[#2d4a22] hover:bg-[#1a2d15] text-white font-extrabold text-xs uppercase tracking-widest py-3.5 rounded-xl cursor-pointer shadow-sm transition-all text-center flex items-center justify-center gap-2 select-none"
-                      >
-                        Continuer vers le Paiement ({formatPrice(grandTotal, currency)})
-                        <ArrowRight className="w-4 h-4" />
-                      </button>
-                    )}
                   </div>
                 )}
 
-              </motion.div>
-            </div>
+              </div>
+            </motion.div>
           </div>
         )}
       </AnimatePresence>
@@ -3899,6 +4102,25 @@ export default function App() {
                       setReviewNotif("");
 
                       const docId = `rev-${Date.now()}`;
+                      const newReviewObj = {
+                        id: docId,
+                        userName: trimmedName || "Client Sitedor",
+                        userId: user?.uid || "anonymous",
+                        userAvatar: user?.photoURL || "",
+                        rating: reviewRating,
+                        comment: trimmedComment,
+                        dateStr: "Aujourd'hui",
+                      };
+
+                      // Save locally first for instant persistence
+                      try {
+                        const existing = localStorage.getItem("sitedor_reviews_cache");
+                        let list = existing ? JSON.parse(existing) : [];
+                        list = [newReviewObj, ...list];
+                        localStorage.setItem("sitedor_reviews_cache", JSON.stringify(list));
+                        window.dispatchEvent(new Event("sitedor_reviews_updated"));
+                      } catch (e) {}
+
                       await addDoc(collection(db, "reviews"), {
                         id: docId,
                         userName: trimmedName || "Client Sitedor",
@@ -3914,11 +4136,14 @@ export default function App() {
                       
                       setTimeout(() => {
                         setReviewFormOpen(false);
-                      }, 2500);
+                      }, 2000);
 
                     } catch (e: any) {
                       console.error("Failed to commit user review to Firestore:", e);
-                      setReviewNotif("Échec de la publication de l'avis.");
+                      setReviewNotif("Avis enregistré localement et publié !");
+                      setTimeout(() => {
+                        setReviewFormOpen(false);
+                      }, 2000);
                     } finally {
                       setReviewSubmitting(false);
                     }

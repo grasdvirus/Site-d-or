@@ -57,10 +57,12 @@ export default function Pricing({ products, onAddToCart, onOpenDetails, lang = "
     setTimeout(() => setCopiedCodeId(null), 2000);
   };
 
-  // Categories list matching reference image
+  // Categories list dynamically derived from products
   const categoriesList = useMemo(() => {
-    return Array.from(new Set(["Tous", ...(categories || ["Lounge", "Office", "Dining", "Rocking"])]));
-  }, [categories]);
+    const defaultCats = categories || ["Lounge", "Office", "Dining", "Rocking"];
+    const productCats = products ? products.map(p => p.category).filter(Boolean) : [];
+    return Array.from(new Set(["Tous", ...defaultCats, ...productCats]));
+  }, [categories, products]);
 
   // Count of liked items
   const likedCount = useMemo(() => {
@@ -376,17 +378,6 @@ export default function Pricing({ products, onAddToCart, onOpenDetails, lang = "
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {onOpenDetails && (
-                    <button
-                      type="button"
-                      onClick={() => onOpenDetails(product)}
-                      className="px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-mono font-bold text-[10px] uppercase tracking-wider rounded-xl transition-all cursor-pointer"
-                      title="Voir tous les détails, tailles et couleurs"
-                    >
-                      Détails
-                    </button>
-                  )}
-
                   <motion.button
                     type="button"
                     disabled={product.stock === 0}

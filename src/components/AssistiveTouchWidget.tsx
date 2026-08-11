@@ -76,49 +76,54 @@ export const AssistiveTouchWidget: React.FC<AssistiveTouchProps> = ({
     }
   };
 
+  // Direct search and redirect helper (no secondary confirmation needed)
+  const handleExecuteSearchAndRedirect = (codeText: string) => {
+    const clean = codeText.trim();
+    if (!clean) return false;
+
+    setFastCode(clean.toUpperCase());
+
+    // 1. Try applying as promo code if valid
+    if (onApplyPromoCode) {
+      onApplyPromoCode(clean);
+    }
+
+    // 2. Perform search & redirect directly to matching product or catalog
+    if (onSearchProduct) {
+      onSearchProduct(clean);
+    }
+
+    // 3. Automatically close modal for instant seamless navigation
+    setIsOpen(false);
+    return true;
+  };
+
   // Automatic paste & search handler
-  const handlePasteAndSearch = async () => {
+  const handlePasteAndSearch = async (overrideText?: string) => {
     try {
-      const text = await navigator.clipboard.readText();
-      if (!text || !text.trim()) {
-        setPromoFeedback({ type: "error", msg: "Le presse-papier est actuellement vide." });
-        setTimeout(() => setPromoFeedback(null), 3000);
-        return;
+      let cleanText = overrideText ? overrideText.trim() : "";
+      
+      if (!cleanText && navigator.clipboard && navigator.clipboard.readText) {
+        const text = await navigator.clipboard.readText();
+        cleanText = text ? text.trim() : "";
       }
 
-      const cleanText = text.trim();
-      setFastCode(cleanText.toUpperCase());
-
-      // Try promo code application
-      let promoApplied = false;
-      if (onApplyPromoCode) {
-        promoApplied = onApplyPromoCode(cleanText);
+      if (!cleanText) {
+        setActiveTab("promo");
+        setPromoFeedback({ type: "error", msg: "Le presse-papier est actuellement vide. Saisissez votre code ci-dessous." });
+        setTimeout(() => setPromoFeedback(null), 3500);
+        return false;
       }
 
-      // Perform catalog search
-      if (onSearchProduct) {
-        onSearchProduct(cleanText);
-      }
-
-      if (promoApplied) {
-        setPromoFeedback({
-          type: "success",
-          msg: `🎉 Code Promo "${cleanText}" appliqué et recherche effectuée dans le catalogue !`
-        });
-      } else {
-        setPromoFeedback({
-          type: "success",
-          msg: `🔍 Texte "${cleanText}" collé ! Recherche lancée dans les produits.`
-        });
-      }
-
-      setTimeout(() => setPromoFeedback(null), 4000);
+      return handleExecuteSearchAndRedirect(cleanText);
     } catch (err) {
+      setActiveTab("promo");
       setPromoFeedback({
         type: "error",
-        msg: "Impossible d'accéder au presse-papier automatique. Veuillez collez votre code ci-dessous."
+        msg: "Impossible d'accéder au presse-papier automatique. Veuillez coller votre code ci-dessous."
       });
       setTimeout(() => setPromoFeedback(null), 3500);
+      return false;
     }
   };
 
@@ -126,27 +131,7 @@ export const AssistiveTouchWidget: React.FC<AssistiveTouchProps> = ({
   const handlePromoSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!fastCode.trim()) return;
-
-    const cleanCode = fastCode.trim();
-
-    let promoApplied = false;
-    if (onApplyPromoCode) {
-      promoApplied = onApplyPromoCode(cleanCode);
-    }
-
-    if (onSearchProduct) {
-      onSearchProduct(cleanCode);
-    }
-
-    if (promoApplied) {
-      setPromoFeedback({ type: "success", msg: `Code "${cleanCode}" appliqué avec succès !` });
-      setFastCode("");
-    } else {
-      setPromoFeedback({ type: "success", msg: `Recherche effectuée pour "${cleanCode}".` });
-      setFastCode("");
-    }
-
-    setTimeout(() => setPromoFeedback(null), 3500);
+    handleExecuteSearchAndRedirect(fastCode);
   };
 
   // Copy helper
@@ -285,7 +270,6 @@ export const AssistiveTouchWidget: React.FC<AssistiveTouchProps> = ({
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.97 }}
                         onClick={async () => {
-                          setActiveTab("promo");
                           await handlePasteAndSearch();
                         }}
                         className="p-4 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-md hover:shadow-amber-500/20 flex flex-col items-center justify-center gap-2 text-center group cursor-pointer border border-amber-400/30"
@@ -353,13 +337,20 @@ export const AssistiveTouchWidget: React.FC<AssistiveTouchProps> = ({
                             type="text"
                             value={fastCode}
                             onChange={(e) => setFastCode(e.target.value.toUpperCase())}
-                            placeholder="ex : VIP20 ou CANAPE"
+                            onPaste={(e) => {
+                              const pasted = e.clipboardData.getData("text");
+                              if (pasted && pasted.trim()) {
+                                e.preventDefault();
+                                handleExecuteSearchAndRedirect(pasted);
+                              }
+                            }}
+                            placeholder="ex : VIP20 ou NX892A7K"
                             className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white dark:placeholder-slate-400 rounded-xl px-4 py-2.5 text-xs font-mono font-bold uppercase outline-none focus:border-amber-500"
                           />
                           <button
                             type="button"
-                            onClick={handlePasteAndSearch}
-                            className="px-3.5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm"
+                            onClick={() => handlePasteAndSearch()}
+                            className="px-3.5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm shrink-0"
                           >
                             <Copy className="w-3.5 h-3.5" />
                             Coller & Chercher
