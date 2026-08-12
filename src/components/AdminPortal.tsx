@@ -836,8 +836,10 @@ export default function AdminPortal({
         "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=600&q=80"
       ];
 
-      let finalImage = image.trim() || defaultImages[Math.floor(Math.random() * defaultImages.length)];
+      const ytClean = youtubeUrl.trim();
+      let finalImage = ytClean || image.trim() || defaultImages[Math.floor(Math.random() * defaultImages.length)];
       let finalImage2 = image2.trim() || undefined;
+      const activeYoutubeUrl = ytClean || (isYouTubeUrl(finalImage).isYouTube ? finalImage : undefined);
 
       // Ensure base64 image data is physically saved to public/images/ and replaced with relative /images/ path
       if (finalImage.startsWith("data:")) {
@@ -878,7 +880,7 @@ export default function AdminPortal({
           price: priceNum,
           image: finalImage,
           image2: finalImage2,
-          youtubeUrl: youtubeUrl.trim() || undefined,
+          youtubeUrl: activeYoutubeUrl,
           category: category,
           colors: colorsList.length > 0 ? colorsList : [{ name: "Noir mat", hex: "#000000" }],
           variantsLabel: variantsLabel.trim() || undefined,
@@ -908,7 +910,7 @@ export default function AdminPortal({
           price: priceNum,
           image: finalImage,
           image2: finalImage2,
-          youtubeUrl: youtubeUrl.trim() || undefined,
+          youtubeUrl: activeYoutubeUrl,
           category: category,
           colors: colorsList.length > 0 ? colorsList : [{ name: "Noir mat", hex: "#000000" }],
           variantsLabel: variantsLabel.trim() || undefined,
@@ -1501,152 +1503,6 @@ export default function AdminPortal({
                   onChange={(e) => setStock(e.target.value)}
                   className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white dark:placeholder-slate-400 focus:border-[#2d4a22] dark:focus:border-emerald-500 focus:bg-white dark:focus:bg-slate-800 rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
                 />
-              </div>
-
-              {/* IMAGE 1 - Main Image (Upload Only) */}
-              <div className="space-y-1.5 md:col-span-2 p-4 bg-slate-50/60 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-mono font-bold uppercase tracking-wider text-[#2d4a22] dark:text-emerald-400">
-                    🖼️ Image Principale (Téléversement Fichier Unique)
-                  </label>
-                  <span className="text-[9px] font-mono text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/80 px-2 py-0.5 rounded-md font-bold">
-                    Téléversement Fichier Seul
-                  </span>
-                </div>
-                
-                {/* Local Image 1 File Upload */}
-                <div
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  className={`border-2 border-dashed rounded-xl p-3 text-center transition-all cursor-pointer relative min-h-[100px] flex flex-col items-center justify-center ${
-                    imageDragging
-                      ? "border-[#2d4a22] bg-[#2d4a22]/5"
-                      : image
-                      ? "border-slate-300 dark:border-slate-600 bg-white/60 dark:bg-slate-900/60"
-                      : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-[#2d4a22]"
-                  }`}
-                >
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageUpload}
-                    id="local-image-file-picker"
-                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                  />
-                  
-                  {isUploadingImage ? (
-                    <div className="flex flex-col items-center space-y-2 pointer-events-none">
-                      <div className="w-6 h-6 rounded-full border-2 border-[#2d4a22]/80 border-t-transparent animate-spin" />
-                      <p className="text-[10px] font-bold text-[#2d4a22] dark:text-emerald-400 font-mono animate-pulse">Téléchargement Image 1...</p>
-                    </div>
-                  ) : image ? (
-                    <div className="flex items-center gap-3 pointer-events-none">
-                      <div className="w-16 h-16 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-xs shrink-0">
-                        <SmartMedia 
-                          src={image} 
-                          alt="Prévisualisation Image 1" 
-                          containerClassName="w-full h-full"
-                        />
-                      </div>
-                      <div className="text-left">
-                        <p className="text-[10px] font-semibold text-[#2d4a22] dark:text-emerald-400 font-mono">
-                          Image 1 chargée
-                        </p>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            setImage("");
-                          }}
-                          className="pointer-events-auto mt-1 bg-rose-50 dark:bg-rose-950/80 hover:bg-rose-500 text-rose-600 dark:text-rose-300 hover:text-white border border-rose-200 dark:border-rose-800 rounded-lg px-2 py-0.5 text-[9px] font-mono uppercase font-black transition-all"
-                        >
-                          Retirer
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-1 text-slate-500 dark:text-slate-400 pointer-events-none">
-                      <div className="text-xs">
-                        <span className="font-bold text-[#2d4a22] dark:text-emerald-400">Téléverser Image 1</span> ou glisser-déposer ici
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* IMAGE 2 - Secondary Image Upload Only */}
-              <div className="space-y-1.5 md:col-span-2 p-4 bg-purple-50/50 dark:bg-purple-950/30 rounded-2xl border border-purple-200 dark:border-purple-800">
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-mono font-bold uppercase tracking-wider text-purple-700 dark:text-purple-300">
-                    🖼️ Image 2 Secondaire (Téléversement Fichier Unique)
-                  </label>
-                  <span className="text-[9px] font-mono text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/80 px-2 py-0.5 rounded-md font-bold">
-                    Téléversement Fichier Seul
-                  </span>
-                </div>
-                
-                {/* Local Image 2 File Upload */}
-                <div
-                  onDragOver={handleDragOver2}
-                  onDragLeave={handleDragLeave2}
-                  onDrop={handleDrop2}
-                  className={`border-2 border-dashed rounded-xl p-4 text-center transition-all cursor-pointer relative min-h-[110px] flex flex-col items-center justify-center ${
-                    image2Dragging
-                      ? "border-purple-500 bg-purple-500/5"
-                      : image2
-                      ? "border-purple-300 dark:border-purple-700 bg-white/60 dark:bg-slate-900/60"
-                      : "border-purple-200 dark:border-purple-800 bg-white dark:bg-slate-900 hover:border-purple-500"
-                  }`}
-                >
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImage2Upload}
-                    id="local-image2-file-picker"
-                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                  />
-                  
-                  {isUploadingImage2 ? (
-                    <div className="flex flex-col items-center space-y-2 pointer-events-none">
-                      <div className="w-6 h-6 rounded-full border-2 border-purple-600 border-t-transparent animate-spin" />
-                      <p className="text-[10px] font-bold text-purple-600 font-mono animate-pulse">Téléchargement Image 2...</p>
-                    </div>
-                  ) : image2 ? (
-                    <div className="flex items-center gap-3 pointer-events-none">
-                      <div className="w-16 h-16 rounded-xl overflow-hidden border border-purple-200 dark:border-purple-800 shadow-xs shrink-0">
-                        <SmartMedia 
-                          src={image2} 
-                          alt="Prévisualisation Image 2" 
-                          containerClassName="w-full h-full"
-                        />
-                      </div>
-                      <div className="text-left">
-                        <p className="text-[10px] font-semibold text-purple-700 dark:text-purple-300 font-mono">
-                          Image 2 secondaire prêtes
-                        </p>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            setImage2("");
-                          }}
-                          className="pointer-events-auto mt-1 bg-rose-50 dark:bg-rose-950/80 hover:bg-rose-500 text-rose-600 dark:text-rose-300 hover:text-white border border-rose-200 dark:border-rose-800 rounded-lg px-2 py-0.5 text-[9px] font-mono uppercase font-black transition-all"
-                        >
-                          Retirer Image 2
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-1 text-purple-600 dark:text-purple-300 pointer-events-none">
-                      <div className="text-xs">
-                        <span className="font-bold">Téléverser Image 2 (Optionnel)</span> ou glisser-déposer ici
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
 
               {/* YOUTUBE VIDEO FIELD AND DEDICATED LIVE PREVIEW BOX */}

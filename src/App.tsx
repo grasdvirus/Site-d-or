@@ -124,7 +124,7 @@ export default function App() {
   const [currency, setCurrency] = useState<Currency>(() => {
     return (localStorage.getItem("nexus_currency") as Currency) || "CFA";
   });
-  const [categories, setCategories] = useState<string[]>(["Lounge", "Office", "Dining", "Rocking"]);
+  const [categories, setCategories] = useState<string[]>([]);
   const [customOptions, setCustomOptions] = useState<Record<string, { label: string; values: string[] }[]>>({});
   const [showScrollTop, setShowScrollTop] = useState(false);
   
@@ -140,21 +140,21 @@ export default function App() {
   // Active translation dictionary
   const t = TRANSLATIONS[lang] || TRANSLATIONS.fr;
 
-  // Products state - initialized from local storage cache or initial catalog, synced live with Firestore
+  // Products state - initialized strictly empty or from local storage cache excluding sample items
   const [products, setProducts] = useState<Product[]>(() => {
     try {
       const saved = localStorage.getItem("sitedor_products_cache");
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const filtered = parsed.filter((p: any) => p && p.id && !["orris-chair", "elvo-chair", "sienna-lounge", "mollis-accent", "kivi-cozy"].includes(p.id));
+          const filtered = parsed.filter((p: any) => p && p.id && !["orris-chair", "elvo-chair", "sienna-lounge", "mollis-accent", "kivi-cozy", "pohb-sacs-rangement"].includes(p.id));
           if (filtered.length > 0) return filtered;
         }
       }
     } catch (e) {
       console.warn("Error loading cached products:", e);
     }
-    return INITIAL_PRODUCTS;
+    return [];
   });
 
   // Cart State - Persisted locally
@@ -236,22 +236,21 @@ export default function App() {
   const [warrantyDropdownOpen, setWarrantyDropdownOpen] = useState(false);
   const [deliveryDropdownOpen, setDeliveryDropdownOpen] = useState(false);
 
-  // Dynamic promo codes list from Firestore (with local storage & fallbacks)
+  // Dynamic promo codes list from Firestore (with local storage)
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>(() => {
     try {
       const saved = localStorage.getItem("sitedor_promo_codes");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const filtered = parsed.filter((c: any) => c && c.code && !["WELCOME10", "SUMMER20", "WINTER15"].includes(c.code));
+          if (filtered.length > 0) return filtered;
+        }
       }
     } catch (e) {
       console.warn("Failed to load local promo codes:", e);
     }
-    return [
-      { code: "WELCOME10", discount: 10, description: "10% de réduction de bienvenue", status: "active" },
-      { code: "SUMMER20", discount: 20, description: "20% de réduction d'été", status: "active" },
-      { code: "WINTER15", discount: 15, description: "15% de réduction hivernale", status: "planned" }
-    ];
+    return [];
   });
 
   // Checkout states
@@ -317,18 +316,14 @@ export default function App() {
       q,
       (querySnapshot) => {
         setIsDbLoading(false);
-        if (querySnapshot.empty) {
-          // Fallback to sample catalog with affiliate codes and seed to Firestore
-          setProducts(INITIAL_PRODUCTS);
-          try {
-            localStorage.setItem("sitedor_products_cache", JSON.stringify(INITIAL_PRODUCTS));
-          } catch (e) {}
-          INITIAL_PRODUCTS.forEach((prod) => {
-            setDoc(doc(db, "products", prod.id), prod).catch(() => {});
-          });
-        } else {
-          const LEGACY_SAMPLE_IDS = new Set(["orris-chair", "elvo-chair", "sienna-lounge", "mollis-accent", "kivi-cozy"]);
+        const LEGACY_SAMPLE_IDS = new Set(["orris-chair", "elvo-chair", "sienna-lounge", "mollis-accent", "kivi-cozy", "pohb-sacs-rangement"]);
 
+        if (querySnapshot.empty) {
+          setProducts([]);
+          try {
+            localStorage.setItem("sitedor_products_cache", JSON.stringify([]));
+          } catch (e) {}
+        } else {
           const uniqueMap = new Map<string, Product>();
           querySnapshot.forEach((docSnapshot) => {
             const p = docSnapshot.data() as Product;
@@ -349,14 +344,6 @@ export default function App() {
             }
           });
 
-          // Ensure any newly added INITIAL_PRODUCTS (e.g. POHB) are seeded to Firestore & merged
-          INITIAL_PRODUCTS.forEach((initProd) => {
-            if (!LEGACY_SAMPLE_IDS.has(initProd.id) && !uniqueMap.has(initProd.id)) {
-              uniqueMap.set(initProd.id, initProd);
-              setDoc(doc(db, "products", initProd.id), initProd).catch(() => {});
-            }
-          });
-
           const fetchedList = Array.from(uniqueMap.values());
           setProducts(fetchedList);
           try {
@@ -370,15 +357,15 @@ export default function App() {
           const saved = localStorage.getItem("sitedor_products_cache");
           if (saved) {
             const parsed = JSON.parse(saved);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              const filtered = parsed.filter((p: any) => p && p.id && !["orris-chair", "elvo-chair", "sienna-lounge", "mollis-accent", "kivi-cozy"].includes(p.id));
-              setProducts(filtered.length > 0 ? filtered : INITIAL_PRODUCTS);
+            if (Array.isArray(parsed)) {
+              const filtered = parsed.filter((p: any) => p && p.id && !["orris-chair", "elvo-chair", "sienna-lounge", "mollis-accent", "kivi-cozy", "pohb-sacs-rangement"].includes(p.id));
+              setProducts(filtered);
               setIsDbLoading(false);
               return;
             }
           }
         } catch (e) {}
-        setProducts(INITIAL_PRODUCTS);
+        setProducts([]);
         setIsDbLoading(false);
       }
     );
@@ -424,32 +411,27 @@ export default function App() {
       try {
         const q = query(collection(db, "promo_codes"));
         const querySnapshot = await getDocs(q);
+        const DEFAULT_PROMO_CODES = new Set(["WELCOME10", "SUMMER20", "WINTER15"]);
         
         if (!querySnapshot.empty) {
           const loaded: PromoCode[] = [];
           querySnapshot.forEach((docSnapshot) => {
-            loaded.push(docSnapshot.data() as PromoCode);
+            const data = docSnapshot.data() as PromoCode;
+            if (DEFAULT_PROMO_CODES.has(data.code)) {
+              deleteDoc(doc(db, "promo_codes", docSnapshot.id)).catch(() => {});
+            } else {
+              loaded.push(data);
+            }
           });
           setPromoCodes(loaded);
           localStorage.setItem("sitedor_promo_codes", JSON.stringify(loaded));
         } else {
-          const saved = localStorage.getItem("sitedor_promo_codes");
-          if (saved) {
-            try {
-              const parsed = JSON.parse(saved);
-              if (Array.isArray(parsed) && parsed.length > 0) setPromoCodes(parsed);
-            } catch(e){}
-          }
+          setPromoCodes([]);
+          localStorage.setItem("sitedor_promo_codes", JSON.stringify([]));
         }
       } catch (err: any) {
-        console.warn("Firestore promo codes error or offline, keeping local storage:", err);
-        const saved = localStorage.getItem("sitedor_promo_codes");
-        if (saved) {
-          try {
-            const parsed = JSON.parse(saved);
-            if (Array.isArray(parsed) && parsed.length > 0) setPromoCodes(parsed);
-          } catch(e){}
-        }
+        console.warn("Firestore promo codes error or offline:", err);
+        setPromoCodes([]);
       }
     };
     fetchPromoCodes();
@@ -1731,65 +1713,69 @@ export default function App() {
               </div>
 
               {/* Sample Quick Code Pills */}
-              <div className="flex items-center gap-2 overflow-x-auto py-1 scrollbar-none">
-                <span className="text-[10px] font-mono font-bold uppercase text-slate-400 shrink-0 tracking-wider">
-                  Codes rapides :
-                </span>
-                {products.map((p, idx) => (
-                  <button
-                    key={`search-sample-${p.id}-${idx}`}
-                    type="button"
-                    onClick={() => {
-                      handleOpenProductDetails(p);
-                    }}
-                    className="text-[10px] font-mono font-bold bg-emerald-50 dark:bg-emerald-950/60 hover:bg-[#2d4a22] hover:text-white dark:hover:bg-emerald-600 text-[#2d4a22] dark:text-emerald-300 px-3 py-1.5 rounded-full border border-emerald-200/70 dark:border-emerald-800/80 transition-all shrink-0 cursor-pointer"
-                  >
-                    {p.affiliateCode || p.id} ({p.name})
-                  </button>
-                ))}
-              </div>
+              {products.length > 0 && (
+                <div className="flex items-center gap-2 overflow-x-auto py-1 scrollbar-none">
+                  <span className="text-[10px] font-mono font-bold uppercase text-slate-400 shrink-0 tracking-wider">
+                    Codes rapides :
+                  </span>
+                  {products.map((p, idx) => (
+                    <button
+                      key={`search-sample-${p.id}-${idx}`}
+                      type="button"
+                      onClick={() => {
+                        handleOpenProductDetails(p);
+                      }}
+                      className="text-[10px] font-mono font-bold bg-emerald-50 dark:bg-emerald-950/60 hover:bg-[#2d4a22] hover:text-white dark:hover:bg-emerald-600 text-[#2d4a22] dark:text-emerald-300 px-3 py-1.5 rounded-full border border-emerald-200/70 dark:border-emerald-800/80 transition-all shrink-0 cursor-pointer"
+                    >
+                      {p.affiliateCode || p.id} ({p.name})
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* "DES IDÉES POUR VOUS" SECTION */}
-            <div className="space-y-4 pt-2">
-              <div className="flex items-center justify-between">
-                <h2 className="text-base md:text-lg font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                  <span>Des idées pour vous</span>
-                </h2>
-                <span className="text-[10px] font-mono text-slate-400 font-bold uppercase">5 Catégories</span>
-              </div>
+            {categories.length > 0 && (
+              <div className="space-y-4 pt-2">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base md:text-lg font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    <span>Des idées pour vous</span>
+                  </h2>
+                  <span className="text-[10px] font-mono text-slate-400 font-bold uppercase">{categories.length} Catégories</span>
+                </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
-                {categories.slice(0, 5).map((cat, idx) => {
-                  const sampleProduct = products.find(p => p.category === cat) || products[idx % products.length];
-                  return (
-                    <div
-                      key={`idea-cat-${cat}-${idx}`}
-                      onClick={() => {
-                        if (sampleProduct) {
-                          handleOpenProductDetails(sampleProduct);
-                        }
-                      }}
-                      className="relative aspect-[16/7] rounded-xl md:rounded-2xl overflow-hidden cursor-pointer group shadow-2xs hover:shadow-md transition-all border border-slate-200/80 dark:border-slate-800 active:scale-[0.98]"
-                    >
-                      <img
-                        src={sampleProduct?.image || "https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&q=80&w=800"}
-                        alt={cat}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/40 to-transparent group-hover:from-slate-950/95 transition-opacity" />
-                      <div className="absolute inset-0 flex items-end p-2.5 text-left">
-                        <span className="text-white font-extrabold text-xs leading-tight tracking-wide drop-shadow-sm line-clamp-1">
-                          {cat}
-                        </span>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
+                  {categories.slice(0, 5).map((cat, idx) => {
+                    const sampleProduct = products.find(p => p.category === cat) || (products.length > 0 ? products[idx % products.length] : undefined);
+                    return (
+                      <div
+                        key={`idea-cat-${cat}-${idx}`}
+                        onClick={() => {
+                          if (sampleProduct) {
+                            handleOpenProductDetails(sampleProduct);
+                          }
+                        }}
+                        className="relative aspect-[16/7] rounded-xl md:rounded-2xl overflow-hidden cursor-pointer group shadow-2xs hover:shadow-md transition-all border border-slate-200/80 dark:border-slate-800 active:scale-[0.98]"
+                      >
+                        <img
+                          src={sampleProduct?.image || "https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&q=80&w=800"}
+                          alt={cat}
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/40 to-transparent group-hover:from-slate-950/95 transition-opacity" />
+                        <div className="absolute inset-0 flex items-end p-2.5 text-left">
+                          <span className="text-white font-extrabold text-xs leading-tight tracking-wide drop-shadow-sm line-clamp-1">
+                            {cat}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* "POPULAIRE SUR SITEDOR" SECTION */}
             <div className="space-y-4 pt-2">
