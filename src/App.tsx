@@ -869,6 +869,17 @@ export default function App() {
       localStorage.setItem("sitedor_products_cache", JSON.stringify(updated));
     } catch (e) {}
 
+    // Persist backup to filesystem for GitHub export synchronization
+    try {
+      await fetch('/api/products/save-backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ products: updated })
+      });
+    } catch (backupErr) {
+      console.warn("Product backup save error:", backupErr);
+    }
+
     try {
       // Async fire and forget
       setDoc(doc(db, "products", newProduct.id), newProduct).catch((e: any) => {
@@ -888,6 +899,17 @@ export default function App() {
     try {
       localStorage.setItem("sitedor_products_cache", JSON.stringify(updated));
     } catch (e) {}
+
+    // Persist backup to filesystem for GitHub export synchronization
+    try {
+      await fetch('/api/products/save-backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ products: updated })
+      });
+    } catch (backupErr) {
+      console.warn("Product backup save error:", backupErr);
+    }
 
     try {
       // Async fire and forget
@@ -910,6 +932,17 @@ export default function App() {
       localStorage.setItem("sitedor_products_cache", JSON.stringify(updated));
     } catch (e) {}
     setCart(cart.filter(item => item.product.id !== productId));
+
+    // Persist backup to filesystem for GitHub export synchronization
+    try {
+      await fetch('/api/products/save-backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ products: updated })
+      });
+    } catch (backupErr) {
+      console.warn("Product backup save error:", backupErr);
+    }
 
     try {
       // Async fire and forget

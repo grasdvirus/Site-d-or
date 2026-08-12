@@ -280,6 +280,7 @@ export default function AdminPortal({
 
   // Saving and deleting spinner states
   const [isSavingProduct, setIsSavingProduct] = useState(false);
+  const [isSyncingBackup, setIsSyncingBackup] = useState(false);
   const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
   const [isSavingCategory, setIsSavingCategory] = useState(false);
   const [deletingCategory, setDeletingCategory] = useState<string | null>(null);
@@ -931,6 +932,29 @@ export default function AdminPortal({
     }
   };
 
+  const handleManualBackupSync = async () => {
+    try {
+      setIsSyncingBackup(true);
+      const res = await fetch('/api/products/save-backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ products })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setNotifMessage(`Sauvegarde produits réussie ! ${products.length} produit(s) sauvegardé(s) dans le fichier pour l'exportation GitHub.`);
+      } else {
+        alert(data.error || "Erreur lors de la sauvegarde du fichier produits.");
+      }
+    } catch (err) {
+      console.error("Manual backup sync failed:", err);
+      alert("Erreur de communication lors de la sauvegarde du fichier.");
+    } finally {
+      setIsSyncingBackup(false);
+      setTimeout(() => setNotifMessage(""), 5000);
+    }
+  };
+
   const handleSaveConfigs = async (e: React.FormEvent) => {
     e.preventDefault();
     const newConfig = {
@@ -1368,16 +1392,29 @@ export default function AdminPortal({
                 </p>
               </div>
 
-              {editingProduct && (
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={handleCancelEditProduct}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-600 dark:text-slate-350 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                  onClick={handleManualBackupSync}
+                  disabled={isSyncingBackup}
+                  title="Écrit tous les produits dans le fichier de sauvegarde local (sauvegarde_produit.json) pour l'exportation GitHub"
+                  className="px-3 py-1.5 bg-[#2d4a22]/10 hover:bg-[#2d4a22]/20 text-[#2d4a22] dark:bg-emerald-950/40 dark:text-emerald-400 dark:hover:bg-emerald-900/50 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
-                  <X className="w-3 h-3" />
-                  Annuler
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingBackup ? "animate-spin" : ""}`} />
+                  {isSyncingBackup ? "Sauvegarde..." : "Sauvegarder pour GitHub"}
                 </button>
-              )}
+
+                {editingProduct && (
+                  <button
+                    type="button"
+                    onClick={handleCancelEditProduct}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-600 dark:text-slate-350 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                    Annuler
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

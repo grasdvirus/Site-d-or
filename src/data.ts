@@ -1,4 +1,5 @@
 import { Product } from "./types";
+import backupProducts from "./data/sauvegarde_produits.json";
 
 export function generateAffiliateCode(seed?: string): string {
   if (!seed) {
@@ -30,7 +31,7 @@ export function generateAffiliateCode(seed?: string): string {
   return `${prefix}${code.slice(0, 6)}`;
 }
 
-export const INITIAL_PRODUCTS: Product[] = [
+const DEFAULT_CATALOG: Product[] = [
   {
     id: "pohb-sacs-rangement",
     name: "POHB 3 sacs de rangement de grande capacité, appuyez sur l'échappement pour ranger les couettes et les vêtements",
@@ -55,6 +56,10 @@ export const INITIAL_PRODUCTS: Product[] = [
     isFeatured: true
   }
 ];
+
+export const INITIAL_PRODUCTS: Product[] = (Array.isArray(backupProducts) && backupProducts.length > 0)
+  ? (backupProducts as Product[])
+  : DEFAULT_CATALOG;
 
 export const ECOMMERCE_FAQS = [
   {

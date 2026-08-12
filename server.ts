@@ -87,6 +87,73 @@ function saveBase64Image(base64Str: string, originalName?: string): string {
 }
 
 // API routes FIRST
+app.post("/api/products/save-backup", express.json({ limit: "50mb" }), (req: express.Request, res: express.Response) => {
+  try {
+    const { products } = req.body;
+    if (!Array.isArray(products)) {
+      return res.status(400).json({ error: "Format invalide pour les produits" });
+    }
+
+    const backupJson = JSON.stringify(products, null, 2);
+
+    const rootPath = path.join(process.cwd(), "sauvegarde_produit.json");
+    const srcDataPath = path.join(process.cwd(), "src", "data", "sauvegarde_produits.json");
+
+    try {
+      const srcDir = path.dirname(srcDataPath);
+      if (!fs.existsSync(srcDir)) {
+        fs.mkdirSync(srcDir, { recursive: true });
+      }
+      fs.writeFileSync(srcDataPath, backupJson, "utf-8");
+    } catch (e) {
+      console.warn("Could not write to src/data/sauvegarde_produits.json:", e);
+    }
+
+    try {
+      fs.writeFileSync(rootPath, backupJson, "utf-8");
+    } catch (e) {
+      console.warn("Could not write to root sauvegarde_produit.json:", e);
+    }
+
+    console.log(`[SAUVEGARDE PRODUITS] Saved ${products.length} products to backup files.`);
+
+    return res.json({
+      success: true,
+      message: `${products.length} produit(s) sauvegardé(s) dans le fichier de code avec succès.`,
+      savedCount: products.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("Error saving product backup file:", err);
+    return res.status(500).json({ error: err.message || "Erreur d'écriture du fichier de sauvegarde" });
+  }
+});
+
+app.get("/api/products/backup", (req: express.Request, res: express.Response) => {
+  try {
+    const rootPath = path.join(process.cwd(), "sauvegarde_produit.json");
+    const srcDataPath = path.join(process.cwd(), "src", "data", "sauvegarde_produits.json");
+
+    let targetPath = "";
+    if (fs.existsSync(srcDataPath)) {
+      targetPath = srcDataPath;
+    } else if (fs.existsSync(rootPath)) {
+      targetPath = rootPath;
+    }
+
+    if (targetPath) {
+      const raw = fs.readFileSync(targetPath, "utf-8");
+      const products = JSON.parse(raw);
+      return res.json({ success: true, products, count: products.length });
+    } else {
+      return res.json({ success: false, products: [], count: 0 });
+    }
+  } catch (err: any) {
+    console.error("Error reading product backup file:", err);
+    return res.status(500).json({ error: "Erreur lors de la lecture de la sauvegarde" });
+  }
+});
+
 app.post("/api/upload", express.json({ limit: "50mb" }), (req: express.Request, res: express.Response) => {
   try {
     const { base64, filename } = req.body;
