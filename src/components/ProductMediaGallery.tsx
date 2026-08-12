@@ -5,6 +5,7 @@ import { SmartMedia } from "./SmartMedia";
 interface ProductMediaGalleryProps {
   image: string;
   image2?: string;
+  youtubeUrl?: string;
   alt: string;
   className?: string;
   containerClassName?: string;
@@ -14,12 +15,13 @@ interface ProductMediaGalleryProps {
 export const ProductMediaGallery: React.FC<ProductMediaGalleryProps> = ({
   image,
   image2,
+  youtubeUrl,
   alt,
   className = "w-full h-full object-cover",
   containerClassName = "w-full h-full relative",
   showIndicators = true,
 }) => {
-  const images = [image, image2].filter(
+  const images = [youtubeUrl, image, image2].filter(
     (img): img is string => typeof img === "string" && img.trim().length > 0
   );
 

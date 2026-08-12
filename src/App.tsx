@@ -2459,6 +2459,7 @@ export default function App() {
                       <ProductMediaGallery 
                         image={spotlightProduct.image} 
                         image2={spotlightProduct.image2}
+                        youtubeUrl={spotlightProduct.youtubeUrl}
                         alt={spotlightProduct.name}
                         className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover/hero:scale-105" 
                         containerClassName="w-full h-full"

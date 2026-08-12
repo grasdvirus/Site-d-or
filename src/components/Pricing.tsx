@@ -244,6 +244,7 @@ export default function Pricing({ products, onAddToCart, onOpenDetails, lang = "
                 <ProductMediaGallery
                   image={product.image}
                   image2={product.image2}
+                  youtubeUrl={product.youtubeUrl}
                   alt={product.name}
                   className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover/card:scale-105"
                   containerClassName="w-full h-full"

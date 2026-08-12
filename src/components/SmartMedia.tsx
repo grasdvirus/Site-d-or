@@ -45,24 +45,29 @@ export function isYouTubeUrl(url: string): { isYouTube: boolean; embedUrl?: stri
   if (cleanUrl.includes("youtube.com/watch?v=")) {
     const parts = cleanUrl.split("v=");
     if (parts[1]) {
-      videoId = parts[1].split("&")[0];
+      videoId = parts[1].split("&")[0].split("#")[0];
     }
   } else if (cleanUrl.includes("youtu.be/")) {
     const parts = cleanUrl.split("youtu.be/");
     if (parts[1]) {
-      videoId = parts[1].split("?")[0];
+      videoId = parts[1].split("?")[0].split("#")[0];
     }
   } else if (cleanUrl.includes("youtube.com/embed/")) {
     const parts = cleanUrl.split("youtube.com/embed/");
     if (parts[1]) {
-      videoId = parts[1].split("?")[0];
+      videoId = parts[1].split("?")[0].split("#")[0];
+    }
+  } else if (cleanUrl.includes("youtube.com/shorts/")) {
+    const parts = cleanUrl.split("youtube.com/shorts/");
+    if (parts[1]) {
+      videoId = parts[1].split("?")[0].split("#")[0];
     }
   }
 
   if (videoId) {
     return {
       isYouTube: true,
-      embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0&modestbranding=1`
+      embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0&modestbranding=1&rel=0&showinfo=0&iv_load_policy=3&disablekb=1&fs=0&playsinline=1&enablejsapi=1`
     };
   }
   return { isYouTube: false };
@@ -122,16 +127,18 @@ export const SmartMedia: React.FC<SmartMediaProps> = ({
     );
   }
 
-  // 2. YouTube Embed
+  // 2. YouTube Embed - Clean autoplay loop with all controls & logos removed
   if (isYouTube && ytEmbed) {
     return (
-      <div className={`${containerClassName} bg-black`}>
+      <div className={`${containerClassName} bg-black relative overflow-hidden`}>
         <iframe
           src={ytEmbed}
-          className="w-full h-full border-0 pointer-events-none scale-125"
+          className="w-full h-full border-0 pointer-events-none scale-135 object-cover"
           title={alt}
           allow="autoplay; encrypted-media; gyroscope; picture-in-picture"
         />
+        {/* Transparent overlay covering the iframe to hide any YouTube hover buttons/logos */}
+        <div className="absolute inset-0 z-10 bg-transparent" />
       </div>
     );
   }

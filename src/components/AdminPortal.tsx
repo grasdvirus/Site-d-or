@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Lock, Unlock, Plus, Trash2, Edit2, Check, X, Tag, Layers, Coins, ChevronDown, ChevronUp, Image as ImageIcon, Sliders, CheckCircle2, AlertTriangle, Hammer, ShieldCheck, Box, UserCheck, Settings, HelpCircle, FileText, Globe, Mail, Send, Inbox, RefreshCw, BarChart3, TrendingUp, Star } from "lucide-react";
+import { Lock, Unlock, Plus, Trash2, Edit2, Check, X, Tag, Layers, Coins, ChevronDown, ChevronUp, Image as ImageIcon, Sliders, CheckCircle2, AlertTriangle, Hammer, ShieldCheck, Box, UserCheck, Settings, HelpCircle, FileText, Globe, Mail, Send, Inbox, RefreshCw, BarChart3, TrendingUp, Star, Video, AlertCircle } from "lucide-react";
 import { Product, PromoCode } from "../types";
 import { generateAffiliateCode } from "../data";
 import { db } from "../firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { formatPrice, formatOrderTotal, formatBespokePrice } from "../translations";
 import AnalyticsD3Dashboard from "./AnalyticsD3Dashboard";
-import { SmartMedia } from "./SmartMedia";
+import { SmartMedia, isYouTubeUrl } from "./SmartMedia";
 import { uploadImageToSupabase, isSupabaseConfigured } from "../lib/supabase";
 
 interface AdminPortalProps {
@@ -72,6 +72,7 @@ export default function AdminPortal({
   const [category, setCategory] = useState("");
   const [image, setImage] = useState("");
   const [image2, setImage2] = useState("");
+  const [youtubeUrl, setYoutubeUrl] = useState("");
   const [image2Dragging, setImage2Dragging] = useState(false);
   const [isUploadingImage2, setIsUploadingImage2] = useState(false);
   
@@ -108,6 +109,7 @@ export default function AdminPortal({
     setCategory(p.category);
     setImage(p.image);
     setImage2(p.image2 || "");
+    setYoutubeUrl(p.youtubeUrl || "");
     setColorsList(p.colors || []);
     setVariantsLabel(p.variantsLabel || "Taille");
     setVariantsList(p.variants || []);
@@ -129,6 +131,7 @@ export default function AdminPortal({
     setCategory(categories[0] || "");
     setImage("");
     setImage2("");
+    setYoutubeUrl("");
     setColorsList([
       { name: "Vert Signature", hex: "#2d4a22" },
       { name: "Orange Terre Cuite", hex: "#c2410c" }
@@ -875,6 +878,7 @@ export default function AdminPortal({
           price: priceNum,
           image: finalImage,
           image2: finalImage2,
+          youtubeUrl: youtubeUrl.trim() || undefined,
           category: category,
           colors: colorsList.length > 0 ? colorsList : [{ name: "Noir mat", hex: "#000000" }],
           variantsLabel: variantsLabel.trim() || undefined,
@@ -904,6 +908,7 @@ export default function AdminPortal({
           price: priceNum,
           image: finalImage,
           image2: finalImage2,
+          youtubeUrl: youtubeUrl.trim() || undefined,
           category: category,
           colors: colorsList.length > 0 ? colorsList : [{ name: "Noir mat", hex: "#000000" }],
           variantsLabel: variantsLabel.trim() || undefined,
@@ -925,6 +930,7 @@ export default function AdminPortal({
       setStock("");
       setImage("");
       setImage2("");
+      setYoutubeUrl("");
       setColorsList([
         { name: "Vert Signature", hex: "#2d4a22" },
         { name: "Orange Terre Cuite", hex: "#c2410c" }
@@ -1497,23 +1503,16 @@ export default function AdminPortal({
                 />
               </div>
 
-              {/* IMAGE 1 - Main Image */}
+              {/* IMAGE 1 - Main Image (Upload Only) */}
               <div className="space-y-1.5 md:col-span-2 p-4 bg-slate-50/60 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-mono font-bold uppercase tracking-wider text-[#2d4a22] dark:text-emerald-400">
-                    🖼️ Image Principale (Image 1)
+                    🖼️ Image Principale (Téléversement Fichier Unique)
                   </label>
                   <span className="text-[9px] font-mono text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/80 px-2 py-0.5 rounded-md font-bold">
-                    Pinterest, MP4, Unsplash, Web
+                    Téléversement Fichier Seul
                   </span>
                 </div>
-                <input 
-                  type="url" 
-                  placeholder="ex: https://pinterest.com/pin/123456... ou https://i.pinimg.com/...jpg" 
-                  value={image}
-                  onChange={(e) => setImage(e.target.value)}
-                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white dark:placeholder-slate-400 focus:border-[#2d4a22] rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors"
-                />
                 
                 {/* Local Image 1 File Upload */}
                 <div
@@ -1648,6 +1647,74 @@ export default function AdminPortal({
                     </div>
                   )}
                 </div>
+              </div>
+
+              {/* YOUTUBE VIDEO FIELD AND DEDICATED LIVE PREVIEW BOX */}
+              <div className="space-y-2 md:col-span-2 p-4 bg-red-50/50 dark:bg-red-950/30 rounded-2xl border border-red-200 dark:border-red-900/60">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-mono font-bold uppercase tracking-wider text-red-700 dark:text-red-400 flex items-center gap-1.5">
+                    <Video className="w-4 h-4 text-red-600 animate-pulse" />
+                    <span>🔴 Vidéo YouTube (Lien Vidéo ou Shorts)</span>
+                  </label>
+                  <span className="text-[9px] font-mono text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-900/80 px-2 py-0.5 rounded-md font-bold">
+                    Lecture Automatique
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Collez le lien YouTube pour afficher la vidéo en lecture automatique sur la fiche du produit.
+                </p>
+
+                <div className="flex gap-2">
+                  <input 
+                    type="url" 
+                    placeholder="ex: https://www.youtube.com/watch?v=... ou https://youtu.be/... ou https://youtube.com/shorts/..." 
+                    value={youtubeUrl}
+                    onChange={(e) => setYoutubeUrl(e.target.value)}
+                    className="flex-1 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-800/80 text-slate-900 dark:text-white dark:placeholder-slate-500 focus:border-red-600 rounded-xl px-3.5 py-2.5 text-xs outline-none transition-colors font-mono"
+                  />
+                  {youtubeUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setYoutubeUrl("")}
+                      className="px-3 py-2 bg-rose-100 dark:bg-rose-900/80 hover:bg-rose-500 text-rose-700 dark:text-rose-200 hover:text-white rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0"
+                    >
+                      Effacer
+                    </button>
+                  )}
+                </div>
+
+                {/* Cadre de Prévisualisation de la Vidéo en Direct */}
+                {youtubeUrl.trim().length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {isYouTubeUrl(youtubeUrl).isYouTube ? (
+                      <div className="p-3 bg-slate-950 rounded-2xl border border-red-500/50 shadow-lg space-y-2">
+                        <div className="flex items-center justify-between text-xs font-mono font-bold text-red-400">
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-red-500 animate-ping inline-block" />
+                            Cadre de prévisualisation vidéo YouTube (Lecture Automatique) :
+                          </span>
+                          <span className="bg-red-900/80 text-white text-[9px] px-2 py-0.5 rounded-md font-sans">
+                            Lien Validé
+                          </span>
+                        </div>
+
+                        <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-slate-800">
+                          <SmartMedia 
+                            src={youtubeUrl} 
+                            alt="Prévisualisation Vidéo YouTube Admin" 
+                            containerClassName="w-full h-full"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800/80 rounded-xl text-amber-800 dark:text-amber-300 text-xs font-mono flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>Veuillez coller un lien YouTube valide (ex: youtube.com/watch?v=..., youtu.be/... ou shorts/).</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 

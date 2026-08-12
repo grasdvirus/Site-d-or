@@ -6,6 +6,7 @@ export interface Product {
   price: number;
   image: string;
   image2?: string;
+  youtubeUrl?: string;
   category: string;
   colors: { name: string; hex: string }[];
   variantsLabel?: string; // e.g., "Switch Type" or "Taille"
