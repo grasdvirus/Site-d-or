@@ -24,13 +24,18 @@ if (process.env.GEMINI_API_KEY) {
 const app = express();
 const PORT = 3000;
 
-// Ensure uploads directories exist safely
+// Ensure uploads & images directories exist safely
 const uploadsDirInPublic = path.join(process.cwd(), "public", "uploads");
 const uploadsDirInDist = path.join(process.cwd(), "dist", "uploads");
+const imagesDirInPublic = path.join(process.cwd(), "public", "images");
+const imagesDirInDist = path.join(process.cwd(), "dist", "images");
 
 try {
   if (!fs.existsSync(uploadsDirInPublic)) {
     fs.mkdirSync(uploadsDirInPublic, { recursive: true });
+  }
+  if (!fs.existsSync(imagesDirInPublic)) {
+    fs.mkdirSync(imagesDirInPublic, { recursive: true });
   }
 } catch (e) {
   // Ignore filesystem permission errors in serverless environments
@@ -39,49 +44,70 @@ try {
   if (!fs.existsSync(uploadsDirInDist)) {
     fs.mkdirSync(uploadsDirInDist, { recursive: true });
   }
+  if (!fs.existsSync(imagesDirInDist)) {
+    fs.mkdirSync(imagesDirInDist, { recursive: true });
+  }
 } catch (e) {
   // Ignore filesystem permission errors in serverless environments
 }
 
 function saveBase64Image(base64Str: string, originalName?: string): string {
   try {
-    const matches = base64Str.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-    if (!matches || matches.length !== 3) {
+    if (!base64Str) return base64Str;
+    // If it's already a relative /images/ path, return it directly
+    if (base64Str.startsWith("/images/")) {
       return base64Str;
     }
-    const contentType = matches[1];
-    const binaryBuffer = Buffer.from(matches[2], "base64");
-    
+
+    let binaryBuffer: Buffer;
     let extension = "jpg";
-    if (contentType.includes("png")) extension = "png";
-    else if (contentType.includes("webp")) extension = "webp";
-    else if (contentType.includes("gif")) extension = "gif";
-    else if (contentType.includes("jpeg")) extension = "jpg";
-    else if (contentType.includes("svg")) extension = "svg";
+
+    const matches = base64Str.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    if (matches && matches.length === 3) {
+      const contentType = matches[1];
+      binaryBuffer = Buffer.from(matches[2], "base64");
+      if (contentType.includes("png")) extension = "png";
+      else if (contentType.includes("webp")) extension = "webp";
+      else if (contentType.includes("gif")) extension = "gif";
+      else if (contentType.includes("jpeg")) extension = "jpg";
+      else if (contentType.includes("svg")) extension = "svg";
+    } else {
+      // If it's not a data URI (e.g., standard HTTP URL or simple path), return as is
+      if (!base64Str.startsWith("data:")) {
+        return base64Str;
+      }
+      binaryBuffer = Buffer.from(base64Str.replace(/^data:image\/\w+;base64,/, ""), "base64");
+    }
 
     const cleanOriginal = originalName 
       ? path.parse(originalName).name.toLowerCase().replace(/[^a-z0-9_-]/g, "") 
-      : "upload";
-    const filename = `${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}_${cleanOriginal}.${extension}`;
+      : "produit";
+    const filename = `${Date.now()}_${cleanOriginal}.${extension}`;
 
-    // Try saving to public/uploads
-    const filePathPublic = path.join(uploadsDirInPublic, filename);
-    fs.writeFileSync(filePathPublic, binaryBuffer);
-
-    // Also save to dist/uploads so it is immediately served in production
-    try {
-      if (fs.existsSync(uploadsDirInDist)) {
-        fs.writeFileSync(path.join(uploadsDirInDist, filename), binaryBuffer);
-      }
-    } catch (err) {
-      // Dist might not exist or be read-only
+    // Ensure public/images directory exists
+    if (!fs.existsSync(imagesDirInPublic)) {
+      fs.mkdirSync(imagesDirInPublic, { recursive: true });
     }
 
-    // Return the web resource URL path
-    return `/uploads/${filename}`;
+    // Save to public/images
+    const filePathPublic = path.join(imagesDirInPublic, filename);
+    fs.writeFileSync(filePathPublic, binaryBuffer);
+
+    // Also save to dist/images if dist directory exists
+    try {
+      if (fs.existsSync(imagesDirInDist)) {
+        fs.writeFileSync(path.join(imagesDirInDist, filename), binaryBuffer);
+      }
+    } catch (err) {
+      // Dist directory might not exist yet or be read-only
+    }
+
+    console.log(`[LOCAL IMAGE SAVED] Written to /public/images/${filename}`);
+
+    // Return relative path for database and public URL
+    return `/images/${filename}`;
   } catch (fsErr) {
-    console.warn("Server filesystem is read-only or ephemeral. Returning base64 data URL for direct cloud persistence:", fsErr);
-    // Return base64Str directly so the client can save it to Firestore
+    console.warn("Server filesystem error saving image:", fsErr);
     return base64Str;
   }
 }
@@ -546,9 +572,12 @@ app.post("/api/send-chat-email", express.json(), (req: express.Request, res: exp
   }
 });
 
-// Serve uploads statically
+// Serve uploads and images statically
 app.use("/uploads", express.static(uploadsDirInPublic));
 app.use("/uploads", express.static(uploadsDirInDist));
+app.use("/images", express.static(imagesDirInPublic));
+app.use("/images", express.static(imagesDirInDist));
+app.use(express.static(path.join(process.cwd(), "public")));
 
 // Vite middleware setup
 async function startServer() {

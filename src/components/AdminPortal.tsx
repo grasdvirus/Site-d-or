@@ -677,7 +677,36 @@ export default function AdminPortal({
     });
   };
 
-  // Local and Supabase image handlers
+  // Helper to read file, save directly to local public/images folder, and return relative path (/images/...)
+  const processAndSaveFileLocally = async (file: File): Promise<string> => {
+    const base64Data = await readAndProcessFileAsBase64(file);
+
+    try {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64: base64Data, filename: file.name })
+      });
+      const data = await res.json();
+
+      if (data.url) {
+        // Optionally mirror to Supabase Storage in background if configured
+        if (isSupabaseConfigured) {
+          uploadImageToSupabase(file, "images", "products").catch((err) => {
+            console.warn("Supabase background mirror notice:", err);
+          });
+        }
+        // Return the relative path (/images/...) for clean local storage and GitHub export
+        return data.url;
+      }
+    } catch (err) {
+      console.warn("Local filesystem upload warning, using base64 fallback:", err);
+    }
+
+    return base64Data;
+  };
+
+  // Local public/images image handlers
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -688,22 +717,8 @@ export default function AdminPortal({
 
     setIsUploadingImage(true);
     try {
-      if (isSupabaseConfigured) {
-        const { url, error } = await uploadImageToSupabase(file, "images", "products");
-        if (url && !error) {
-          setImage(url);
-          return;
-        }
-        if (error) {
-          console.warn("Supabase Storage Upload Notice:", error);
-          if (error.includes("Bucket introuvable") || error.includes("bucket")) {
-            alert("Information Supabase Storage :\nLe bucket 'images' n'est pas encore créé sur votre projet Supabase.\n\nL'image a été importée et sauvegardée localement avec succès.\n\nPour stocker vos images directement dans votre cloud Supabase, allez dans votre Dashboard Supabase > Storage > New Bucket et créez un bucket nommé 'images' en mode Public.");
-          }
-        }
-      }
-
-      const base64Url = await readAndProcessFileAsBase64(file);
-      setImage(base64Url);
+      const relativePath = await processAndSaveFileLocally(file);
+      setImage(relativePath);
     } catch (err) {
       console.error("Error uploading primary image:", err);
     } finally {
@@ -737,19 +752,8 @@ export default function AdminPortal({
 
     setIsUploadingImage(true);
     try {
-      if (isSupabaseConfigured) {
-        const { url, error } = await uploadImageToSupabase(file, "images", "products");
-        if (url && !error) {
-          setImage(url);
-          return;
-        }
-        if (error && (error.includes("Bucket introuvable") || error.includes("bucket"))) {
-          alert("Information Supabase Storage :\nLe bucket 'images' est introuvable sur Supabase.\nL'image a été chargée localement avec succès.\n\nCréez un Bucket nommé 'images' (Public) dans votre interface Supabase (Storage > New Bucket).");
-        }
-      }
-
-      const base64Url = await readAndProcessFileAsBase64(file);
-      setImage(base64Url);
+      const relativePath = await processAndSaveFileLocally(file);
+      setImage(relativePath);
     } catch (err) {
       console.error("Error processing dropped image:", err);
     } finally {
@@ -769,19 +773,8 @@ export default function AdminPortal({
 
     setIsUploadingImage2(true);
     try {
-      if (isSupabaseConfigured) {
-        const { url, error } = await uploadImageToSupabase(file, "images", "products");
-        if (url && !error) {
-          setImage2(url);
-          return;
-        }
-        if (error && (error.includes("Bucket introuvable") || error.includes("bucket"))) {
-          alert("Information Supabase Storage :\nLe bucket 'images' est introuvable sur Supabase.\nL'image a été chargée localement avec succès.");
-        }
-      }
-
-      const base64Url = await readAndProcessFileAsBase64(file);
-      setImage2(base64Url);
+      const relativePath = await processAndSaveFileLocally(file);
+      setImage2(relativePath);
     } catch (err) {
       console.error("Error uploading secondary image:", err);
     } finally {
@@ -811,19 +804,8 @@ export default function AdminPortal({
 
     setIsUploadingImage2(true);
     try {
-      if (isSupabaseConfigured) {
-        const { url, error } = await uploadImageToSupabase(file, "images", "products");
-        if (url && !error) {
-          setImage2(url);
-          return;
-        }
-        if (error && (error.includes("Bucket introuvable") || error.includes("bucket"))) {
-          alert("Information Supabase Storage :\nLe bucket 'images' est introuvable sur Supabase.\nL'image a été chargée localement avec succès.");
-        }
-      }
-
-      const base64Url = await readAndProcessFileAsBase64(file);
-      setImage2(base64Url);
+      const relativePath = await processAndSaveFileLocally(file);
+      setImage2(relativePath);
     } catch (err) {
       console.error("Error processing dropped secondary image:", err);
     } finally {
@@ -851,8 +833,37 @@ export default function AdminPortal({
         "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=600&q=80"
       ];
 
-      const finalImage = image.trim() || defaultImages[Math.floor(Math.random() * defaultImages.length)];
-      const finalImage2 = image2.trim() || undefined;
+      let finalImage = image.trim() || defaultImages[Math.floor(Math.random() * defaultImages.length)];
+      let finalImage2 = image2.trim() || undefined;
+
+      // Ensure base64 image data is physically saved to public/images/ and replaced with relative /images/ path
+      if (finalImage.startsWith("data:")) {
+        try {
+          const res = await fetch("/api/upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ base64: finalImage, filename: name.trim() || "product" })
+          });
+          const data = await res.json();
+          if (data.url) finalImage = data.url;
+        } catch (e) {
+          console.warn("Could not save base64 primary image locally:", e);
+        }
+      }
+
+      if (finalImage2 && finalImage2.startsWith("data:")) {
+        try {
+          const res = await fetch("/api/upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ base64: finalImage2, filename: `${name.trim()}_2` })
+          });
+          const data = await res.json();
+          if (data.url) finalImage2 = data.url;
+        } catch (e) {
+          console.warn("Could not save base64 secondary image locally:", e);
+        }
+      }
 
       if (editingProduct) {
         // Edit mode
